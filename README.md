@@ -59,6 +59,39 @@ written into the DOM by JavaScript after load.
 | `status=error` | Scrape genuinely failed; HTML dumped to `raw/` |
 | `store_id_match=0` | **Suspect** — the site priced this row as a *different* store |
 
+### The `api_*` columns
+
+The page prices itself by calling `.../scan-single-item/<store_id>` on every
+load. We don't call that endpoint — we just read the reply instead of throwing
+it away. No extra requests, no credentials, strictly more data:
+
+| Column | What it adds |
+|---|---|
+| `api_stock` | **Exact unit count.** The DOM only ever says "In Stock" |
+| `api_member_price` | Member price, straight from the source |
+| `api_price` | Authoritative retail price |
+| `api_elite_price` | ELITE price — never rendered in the DOM at all |
+| `api_equiv_g` | Grams counted toward the 30 g purchase limit |
+| `api_raw` | Full positional CSV, for the fields not yet decoded |
+
+`api_stock` is the most useful addition. One product across three stores:
+
+```
+Medicine Hat    17 units
+Fort McMurray    7 units
+Brentwood        3 units
+```
+
+All three render as an identical "In Stock" on the page.
+
+The response is a positional CSV — `0,15.44,18.99,each,...` is
+`[0]` stock, `[1]` member price, `[2]` retail price, `[6]` gram equivalence.
+Fields 4 and 5 are still unidentified, which is why `api_raw` is kept.
+
+These also **cross-check the DOM**: where both exist, `api_price` and
+`api_member_price` have matched the rendered values exactly in every row
+observed. A disagreement would be worth investigating.
+
 ### The `store_id_match` warning
 
 The page prices itself by calling `.../scan-single-item/<store_id>`. That ID is

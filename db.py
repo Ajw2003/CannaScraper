@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS observations (
   store_label   TEXT,
   api_store_id   TEXT,     -- store the site actually priced against
   store_id_match INTEGER,  -- 0 = priced as a DIFFERENT store; treat as suspect
+  api_stock       INTEGER, -- exact unit count (DOM only says "In Stock")
+  api_member_price REAL,   -- member price straight from the pricing call
+  api_price       REAL,    -- authoritative retail price
+  api_elite_price REAL,    -- ELITE price, never rendered in the DOM
+  api_equiv_g     REAL,    -- gram equivalence toward the 30 g limit
+  api_raw         TEXT,    -- full positional CSV, for fields not yet decoded
   status        TEXT,
   error         TEXT,
   PRIMARY KEY (run_id, store_id, sku)
@@ -51,7 +57,8 @@ COLUMNS = [
     "sku", "handle", "title", "brand", "category", "size", "url",
     "price", "member_price", "default_price", "available", "carried",
     "stock_text", "thc", "cbd", "store_label", "api_store_id",
-    "store_id_match", "status", "error",
+    "store_id_match", "api_stock", "api_member_price", "api_price", "api_elite_price",
+    "api_equiv_g", "api_raw", "status", "error",
 ]
 
 # Columns added after the first schema shipped. CREATE TABLE IF NOT EXISTS will
@@ -60,6 +67,12 @@ _MIGRATIONS = [
     ("carried", "INTEGER"),
     ("api_store_id", "TEXT"),
     ("store_id_match", "INTEGER"),
+    ("api_stock", "INTEGER"),
+    ("api_member_price", "REAL"),
+    ("api_price", "REAL"),
+    ("api_elite_price", "REAL"),
+    ("api_equiv_g", "REAL"),
+    ("api_raw", "TEXT"),
 ]
 
 

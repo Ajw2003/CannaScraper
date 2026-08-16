@@ -220,6 +220,32 @@ neighbouring store's price lands in your data looking completely normal.
 > [!NOTE]
 > This only *observes* a call the page makes anyway. It does not call the API.
 
+### Read the response body too, not just the URL
+
+That same reply carries more than the DOM ever renders. Capture it with an
+async handler (`asyncio.create_task` to read the body while it is retained):
+
+```
+{"scanned-items":{"203012":"3,0.00,35.99,each,98.10,0.60,4.00,588:203012"},
+ "elitePrices":{"203012":"29.52"}}
+```
+
+Positional CSV: `[0]` stock qty, `[1]` member price, `[2]` retail price,
+`[6]` gram equivalence. Fields 4–5 unidentified — keep the raw string.
+
+This yields **exact stock counts** (17 / 7 / 3 units at three stores that all
+render an identical "In Stock") and the ELITE price, which never appears in
+the DOM. Zero extra requests.
+
+It also resolves an ambiguity the DOM cannot: `api_price == 0` proves "not
+carried", whereas an empty price cell might just be one still loading. Prefer
+the API answer for the carried/not-carried decision.
+
+> [!WARNING]
+> Never record `carried=1` with a null price. That combination means the price
+> cell was still on its placeholder — error and retry instead, or you will
+> bank blanks as though they were real observations.
+
 ---
 
 ## Step 8 — `db.py`: SQLite + CSV
