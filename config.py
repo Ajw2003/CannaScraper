@@ -1,0 +1,91 @@
+"""Single source of truth for the scraper.
+
+Every URL, selector, and tunable lives here. When the site changes, this is
+the only file you should need to edit.
+"""
+
+# --- Endpoints -------------------------------------------------------------
+BASE = "https://cannacabana.com"
+LOCATOR_URL = f"{BASE}/pages/store-locator"
+PRODUCTS_JSON = f"{BASE}/products.json"
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# --- Scope -----------------------------------------------------------------
+PROVINCE = "Alberta"   # matches store["address"]["province"] exactly
+MAX_STORES = None      # set to a small int while developing; None = all
+
+# --- Browser ---------------------------------------------------------------
+HEADLESS = True
+NAV_TIMEOUT_MS = 45_000
+DELAY_RANGE = (2.0, 5.0)   # random sleep between requests, seconds
+MAX_RETRIES = 3
+
+# --- Storage ---------------------------------------------------------------
+DB_PATH = "history.db"
+CSV_PATH = "results.csv"
+RAW_DIR = "raw"
+STORES_CACHE = "stores.json"
+CATALOG_CACHE = "catalog.json"
+CATALOG_MAX_AGE_H = 24
+WATCHLIST = "watchlist.txt"
+
+# --- Store / age-gate state ------------------------------------------------
+# CONFIRMED by discover.py against the live site (Step 5 of the plan).
+#
+# Selecting a store writes these localStorage keys:
+#     global_store_id      '8420'          <- the selected store
+#     global_handle        'haxton'
+#     global_store         {...full store JSON...}
+#     global_province      'Alberta'
+#     global_store_pickup  'Pickup'
+#     global_store_status  'Open'
+#
+# Selecting a store ALSO sets cookies `global_store_id` and `global_province`.
+# We set the cookies too, to match what a real session looks like -- but note
+# the page HTML comes back byte-identical regardless, so the cookie alone buys
+# you nothing. The pricing is applied client-side (see the selector notes
+# below); the localStorage state is what the pricing JS actually reads.
+STORE_ID_KEY = "global_store_id"
+STORE_HANDLE_KEY = "global_handle"
+STORE_OBJ_KEY = "global_store"
+PROVINCE_KEY = "global_province"
+STORE_PICKUP_KEY = "global_store_pickup"
+STORE_STATUS_KEY = "global_store_status"
+
+AGE_GATE_STATE = {
+    "age_verification_pickup": "true",
+    "age_verification_delivery": "true",
+}
+GEO_KEYS = ("latitude_ai", "longitude_ai")
+
+# --- Selectors -------------------------------------------------------------
+# CONFIRMED against rendered product pages.
+#
+# The raw HTML is byte-identical for every store -- per-store pricing is
+# applied CLIENT-SIDE by JavaScript after load. That is why this project needs
+# a real browser and cannot be done with plain HTTP requests. Do not "optimize"
+# this into a requests/BeautifulSoup fetch; you will get one price for all
+# 92 stores and never notice.
+# Scope prices to the ProductInfo block: a second, unrelated price table also
+# exists on the page and sits at "Loading" indefinitely.
+SEL_PRODUCT_INFO = "[id^=ProductInfo]"
+SEL_MARKET_PRICE = "[id^=ProductInfo] .js-market-table-price"  # e.g. "$18.99"
+SEL_MEMBER_PRICE = "[id^=ProductInfo] .js-member-table-price"  # e.g. "$15.64"
+SEL_ADD_BUTTON = "button[name=add], .product-form__submit"
+
+# The site renders "N.A." as the market price when a product is not carried at
+# the selected store (its own JS bails out when retail_price == 0). That is a
+# real per-store signal, not a scrape failure -- record it, don't error on it.
+NOT_CARRIED_TOKENS = ("n.a.", "n/a", "na")
+PRICE_PLACEHOLDER = "loading"
+
+# The header renders the active store as e.g. "Pickup | Haxton, Fort McMurray".
+# This is what we assert against after every store switch.
+SEL_STORE_LABEL = "[class*='store-name'], [class*='current-store'], .header__store"
+
+# How long to let client-side pricing JS settle before reading the DOM.
+PRICE_SETTLE_MS = 9_000

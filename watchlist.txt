@@ -1,0 +1,20 @@
+# Canna Cabana watchlist — one target per line, '#' starts a comment.
+#
+# Each line is matched against the catalog in this order:
+#   1. exact SKU            e.g. 114205
+#   2. exact product handle e.g. cro-og-kush-indica-14-g-spinach
+#      (a full https://cannacabana.com/products/<handle> URL also works)
+#   3. case-insensitive substring of the product title  e.g. OG Kush
+#
+# SKU is the most stable — handles and titles change when products are
+# relisted. Anything that matches nothing is reported loudly at startup, never
+# dropped silently. A title substring may match several variants; that is fine,
+# every resolved variant is scraped at every store.
+#
+# Run `python catalog.py` to see what your lines resolve to before a sweep.
+
+114232    # Spinach — OG Kush, 14 g (Flower)
+203012    # Spinach — Pufferz Grape Gas Disposable Vape, 1 g (Vapes)
+701332    # Spinach — Fully Blasted Pink Lemonade Gummies, 5 pack (Edibles)
+114205    # BOLD — Rocket Fuel PR 3 x 0.5 g (Pre-Rolls)
+113617    # Snicklefritz — Chem Diesel 7 g (often not carried; good control case)

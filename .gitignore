@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+# generated data
+*.db
+*.csv
+raw/
+stores.json
+catalog.json
+discovery.json
