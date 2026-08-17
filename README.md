@@ -144,6 +144,57 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
 
+## The stock index
+
+```bash
+.venv\Scripts\python index_builder.py                    REM Alberta, ~45 min
+.venv\Scripts\python index_builder.py --province Ontario
+.venv\Scripts\python index_builder.py --limit 5          REM try a few first
+```
+
+Indexes **every in-stock product at every store in a province** into the same
+SQLite history the rest of the tool reads. Once built, lookups are **instant** —
+no scraping, no waiting.
+
+It uses `/api/product/search?title=a&storeId=<id>`, which returns a store's
+entire in-stock catalogue 50 per page (~25 calls per store) with retail, member
+and elite price, **exact quantity**, gram equivalence, and **THC/CBD levels**.
+
+| Approach | Full Alberta index |
+|---|---|
+| Per-SKU `scan-multiple-items` | ~30 hours |
+| **Paged `product/search`** | **~45 min** |
+
+Roughly 1,000–1,250 products per store; ~110,000 rows for Alberta.
+
+### Two things that were verified before trusting it
+
+**It is exhaustive.** Eleven different search terms (`z`, `q`, `kush`, `og`,
+`gsc`, `c4`, …) surfaced *zero* variants beyond what `title='a'` returned. Then
+148 catalogue variants absent from the result were independently checked via
+`scan-multiple-items`: **none were in stock** (61 explicitly not carried, the
+rest carried-but-sold-out). The `title` parameter is required but does not
+meaningfully filter.
+
+**It only returns in-stock items.** A sold-out product simply vanishes from the
+response rather than appearing with qty 0. So `index_builder._close_out()`
+zeroes anything that was in stock at a store last run and is absent now.
+Without it, `db.latest_observations()` would keep serving yesterday's in-stock
+row as the freshest fact and send you to a store that has none — tested by
+planting a stale row and confirming a re-index closes it out.
+
+A consequence worth knowing: the index cannot distinguish *"never carried"*
+from *"carried but sold out"*. For that, `--fetcher api` on a specific product
+still gives the fuller answer.
+
+### Keeping it warm
+
+```bash
+schtasks /create /tn "CannaIndex" /tr "C:\Users\aj\Desktop\CannaCabanaScraper\CannaScraper\.venv\Scripts\python.exe C:\Users\aj\Desktop\CannaCabanaScraper\CannaScraper\index_builder.py" /sc daily /st 05:00
+```
+
+Nightly index for breadth, `--refresh` for the one product in hand.
+
 ## Two backends
 
 | | Browser | **API** (default) |
