@@ -18,6 +18,24 @@ USER_AGENT = (
 PROVINCE = "Alberta"   # matches store["address"]["province"] exactly
 MAX_STORES = None      # set to a small int while developing; None = all
 
+# --- "Near me" -------------------------------------------------------------
+# Your default location, so `--near` is optional. Either a place string
+# ("Calgary, AB", "T2P 1J9") or a (lat, lng) tuple. None = must pass --near.
+HOME = "Calgary, AB"
+DEFAULT_TOP = 10       # how many nearest stores a lookup checks by default
+GEOCODE_CACHE = "geocode.json"
+# Nominatim asks that clients identify themselves. Free, no key required.
+NOMINATIM_UA = "CannaCabanaScraper/1.0 (personal stock lookup)"
+
+# How stale cached results may be before we suggest a refresh, in hours.
+CACHE_FRESH_H = 12
+
+# --- Fetch backend ---------------------------------------------------------
+# "browser" = drive a real Chromium (proven, no credentials, ~8s/store).
+# "api"     = the site's internal pricing endpoint (fast, needs its embedded
+#             credentials) -- deliberately a stub until that call is made.
+FETCHER = "browser"
+
 # --- Browser ---------------------------------------------------------------
 HEADLESS = True
 NAV_TIMEOUT_MS = 45_000

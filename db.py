@@ -166,6 +166,75 @@ def in_stock(conn: sqlite3.Connection, run_id: str) -> list[tuple]:
     return cur.fetchall()
 
 
+def latest_observations(conn: sqlite3.Connection, skus: list[str] | None = None,
+                        store_ids: list[str] | None = None) -> list[dict]:
+    """Most recent good row per (sku, store_id), across ALL runs.
+
+    This is the cache behind instant answers: we don't care which run a fact
+    came from, only that it is the freshest one we hold for that store.
+    """
+    def clauses(p: str) -> tuple[str, list]:
+        """Build the predicates with a table prefix (`` or `o.`).
+
+        Both the subquery and the outer query filter identically; the outer one
+        must qualify its columns or `sku`/`store_id` are ambiguous after the
+        join.
+        """
+        w = [f"{p}status = 'ok'", f"COALESCE({p}store_id_match, 1) = 1"]
+        vals: list = []
+        if skus:
+            w.append(f"{p}sku IN ({','.join('?' * len(skus))})")
+            vals += [str(s) for s in skus]
+        if store_ids:
+            w.append(f"{p}store_id IN ({','.join('?' * len(store_ids))})")
+            vals += [str(s) for s in store_ids]
+        return " AND ".join(w), vals
+
+    inner, params = clauses("")
+    outer, params2 = clauses("o.")
+
+    cur = conn.execute(
+        f"""
+        SELECT o.* FROM observations o
+        JOIN (
+            SELECT sku, store_id, MAX(scraped_at) AS newest
+            FROM observations
+            WHERE {inner}
+            GROUP BY sku, store_id
+        ) m ON o.sku = m.sku AND o.store_id = m.store_id
+           AND o.scraped_at = m.newest
+        WHERE {outer}
+        """,
+        params + params2,
+    )
+    cols = [d[0] for d in cur.description]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # One row per (sku, store) even if two runs share a timestamp.
+    seen, out = set(), []
+    for r in rows:
+        key = (r["sku"], r["store_id"])
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+def cache_age_hours(rows: list[dict]) -> float | None:
+    """Age of the freshest row, in hours."""
+    stamps = [r.get("scraped_at") for r in rows if r.get("scraped_at")]
+    if not stamps:
+        return None
+    from datetime import datetime, timezone
+    try:
+        newest = max(datetime.fromisoformat(s) for s in stamps)
+    except ValueError:
+        return None
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - newest).total_seconds() / 3600.0
+
+
 def price_summary(conn: sqlite3.Connection, run_id: str) -> list[tuple]:
     """Cheapest and dearest store per SKU for a run."""
     cur = conn.execute(
