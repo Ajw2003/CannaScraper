@@ -94,13 +94,24 @@ observed. A disagreement would be worth investigating.
 
 ### The `store_id_match` warning
 
-The page prices itself by calling `.../scan-single-item/<store_id>`. That ID is
-normally the store we selected — but not always. Observed: selecting **8230
-(Brentwood)** priced against **3130 (District)**.
+The page prices itself by calling `.../scan-single-item/<store_id>`, choosing
+that ID with `getEffectiveStoreId()`:
 
-We don't call that API; we just watch which store it was asked about and
-compare. Any row where they disagree gets `store_id_match=0` and is listed at
-the end of the run. Filter those out for trustworthy analysis:
+```js
+const HUB_STORE_MAP = { 'district': '3130', 'eastlake': '3170' };
+return isDeliverySelected && HUB_STORE_MAP[store.hub_id]
+  ? HUB_STORE_MAP[store.hub_id]   // the hub
+  : storeId;                      // the real store
+```
+
+**In delivery mode**, each of the 36 Calgary-area stores carrying a `hub_id` is
+priced as its hub — so 17 stores report one identical price and stock, and 19
+report another. That is why `config.AGE_GATE_STATE` sets
+`age_verification_delivery = "false"`: in **pickup** mode the real `store_id` is
+used and every store reports its own shelf.
+
+With pickup mode set, `store_id_match=0` should never appear. If it does, the
+delivery flag has regressed — check `config.py` first. Filter suspect rows with:
 
 ```sql
 SELECT * FROM observations
@@ -132,6 +143,48 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `db.py` | SQLite history + CSV export |
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
+
+## Finding which store has a product in stock
+
+The common case, in two commands. No file editing.
+
+**1. Find the product** (any part of the name):
+
+```bash
+.venv\Scripts\python catalog.py --find "grape gas"
+```
+
+```
+     SKU  brand         size     category   title
+  292114  Claybourne    1.5 g    Pre-Rolls  Frosted Flyers Grape Gasolina Infused PR
+  203012  Spinach       1 g      Vapes      Pufferz Grape Gas Disposable Vape
+```
+
+**2. Hunt it across every store**, using the SKU from step 1:
+
+```bash
+.venv\Scripts\python main.py --product 203012
+```
+
+```
+IN STOCK — 7 store(s):
+
+  units  store                 city           price    member
+     24  Banff                 Banff         $35.99         -
+      9  Bonnyville            Bonnyville    $35.99         -
+      8  Beaumont              Beaumont      $35.99         -
+      1  Blackfalds            Blackfalds    $35.99         -
+```
+
+Sorted by units on hand, so the top row is where it's most likely to still be
+there when you arrive. One product across all 92 Alberta stores takes about
+**12 minutes**; add `--limit 10` to sample quickly first.
+
+`--product` accepts a SKU, handle, product URL, or title text, and can be
+repeated. It overrides `watchlist.txt` for that run without editing anything.
+
+Stores flagged `store_id_match=0` are **excluded** from this list — their stock
+figure belongs to whichever store the site actually answered for.
 
 ## Usage
 

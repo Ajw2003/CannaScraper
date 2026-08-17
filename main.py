@@ -34,6 +34,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="only scrape the first N stores")
     p.add_argument("--store", action="append", default=None,
                    help="scrape a specific store_id (repeatable)")
+    p.add_argument("--product", action="append", default=None, metavar="SKU",
+                   help="scrape THIS product instead of watchlist.txt "
+                        "(SKU, handle, URL, or title text; repeatable)")
     p.add_argument("--refresh-stores", action="store_true",
                    help="re-fetch the store registry")
     p.add_argument("--refresh-catalog", action="store_true",
@@ -57,10 +60,17 @@ async def run(args: argparse.Namespace) -> int:
 
     # --- targets -----------------------------------------------------------
     cat = catalog.get_catalog(refresh=args.refresh_catalog)
-    targets = catalog.resolve_watchlist(cat)
-    if not targets:
-        print("\nNothing to scrape: watchlist.txt resolved to 0 products.")
-        return 2
+    if args.product:
+        targets = catalog.resolve_terms(args.product, cat, label="Product")
+        if not targets:
+            print(f"\nNothing matched {args.product!r}. "
+                  'Try: python catalog.py --find "part of the name"')
+            return 2
+    else:
+        targets = catalog.resolve_watchlist(cat)
+        if not targets:
+            print("\nNothing to scrape: watchlist.txt resolved to 0 products.")
+            return 2
 
     # --- stores ------------------------------------------------------------
     store_list = S.get_stores(province=args.province,
@@ -130,6 +140,22 @@ async def run(args: argparse.Namespace) -> int:
               f" treat these rows as suspect (store_id_match=0):")
         for sid, name, city, api_id in bad:
             print(f"   {sid} {name} ({city})  ->  priced as store {api_id}")
+
+    stocked = db.in_stock(conn, run_id)
+    print("\n" + "-" * 74)
+    if stocked:
+        print(f"IN STOCK — {len(stocked)} store(s):\n")
+        print(f"  {'units':>5}  {'store':<26} {'city':<16} {'price':>8} {'member':>8}")
+        last = None
+        for sku, title, size, sname, city, qty, price, memb, elite in stocked:
+            if sku != last:
+                print(f"\n  {title} ({size})  [SKU {sku}]")
+                last = sku
+            print(f"  {qty if qty is not None else '?':>5}  {sname[:26]:<26} "
+                  f"{city[:16]:<16} {('$%.2f' % price) if price else '-':>8} "
+                  f"{('$%.2f' % memb) if memb else '-':>8}")
+    else:
+        print("IN STOCK — no store in this run had any target product in stock.")
 
     summary = db.price_summary(conn, run_id)
     if summary:

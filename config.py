@@ -56,9 +56,23 @@ PROVINCE_KEY = "global_province"
 STORE_PICKUP_KEY = "global_store_pickup"
 STORE_STATUS_KEY = "global_store_status"
 
+# age_verification_delivery MUST stay "false".
+#
+# The product page chooses its pricing store via getEffectiveStoreId():
+#
+#   const HUB_STORE_MAP = { 'district': '3130', 'eastlake': '3170' };
+#   return isDeliverySelected && HUB_STORE_MAP[store.hub_id]
+#     ? HUB_STORE_MAP[store.hub_id]   // the hub
+#     : storeId;                      // the real store
+#
+# In DELIVERY mode every store carrying a `hub_id` (37 of them, all Calgary
+# area) is priced as its hub instead of itself -- so all 17 "district" stores
+# report one identical price and stock, as do all 20 "eastlake" stores.
+# In PICKUP mode the real store_id is used and each store reports its own
+# inventory, which is what "who actually has this on the shelf" means.
 AGE_GATE_STATE = {
     "age_verification_pickup": "true",
-    "age_verification_delivery": "true",
+    "age_verification_delivery": "false",
 }
 GEO_KEYS = ("latitude_ai", "longitude_ai")
 

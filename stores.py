@@ -107,6 +107,11 @@ def _normalize(s: dict) -> dict:
         "phone": s.get("phone") or "",
         "has_delivery": s.get("has_delivery"),
         "has_pickup": s.get("has_pickup"),
+        # 'district' / 'eastlake' for Calgary-area stores. In delivery mode the
+        # site prices these as their hub rather than themselves -- which is why
+        # config.AGE_GATE_STATE keeps delivery off. Kept so we can tell which
+        # stores would be affected if that ever regresses.
+        "hub_id": (s.get("hub_id") or "").strip().lower(),
     }
 
 

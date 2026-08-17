@@ -146,6 +146,26 @@ def mismatched_stores(conn: sqlite3.Connection, run_id: str) -> list[tuple]:
     return cur.fetchall()
 
 
+def in_stock(conn: sqlite3.Connection, run_id: str) -> list[tuple]:
+    """Every store holding stock in this run, most stock first.
+
+    Suspect rows (priced as a different store) are excluded -- their stock
+    figure belongs to whichever store the site actually answered for.
+    """
+    cur = conn.execute(
+        """
+        SELECT sku, title, size, store_name, city, api_stock,
+               price, member_price, api_elite_price
+        FROM observations
+        WHERE run_id=? AND status='ok' AND carried=1 AND available=1
+          AND COALESCE(store_id_match, 1) = 1
+        ORDER BY sku, COALESCE(api_stock, 0) DESC, city
+        """,
+        (run_id,),
+    )
+    return cur.fetchall()
+
+
 def price_summary(conn: sqlite3.Connection, run_id: str) -> list[tuple]:
     """Cheapest and dearest store per SKU for a run."""
     cur = conn.execute(

@@ -202,20 +202,40 @@ indistinguishable from real "no price" data.
 
 Scrape stores **sequentially** with randomized 2–5s delays.
 
+### Pickup mode is mandatory, or Calgary silently collapses ⚠️
+
+The page picks its pricing store with `getEffectiveStoreId()`:
+
+```js
+const HUB_STORE_MAP = { 'district': '3130', 'eastlake': '3170' };
+return isDeliverySelected && HUB_STORE_MAP[store.hub_id]
+  ? HUB_STORE_MAP[store.hub_id]   // the hub
+  : storeId;                      // the real store
+```
+
+Seed `age_verification_delivery = "false"` (pickup). In **delivery** mode all 36
+Calgary-area stores carrying a `hub_id` are priced as one of two hubs, so they
+report identical stock and you cannot tell which shop actually holds the item:
+
+| Store | Delivery mode | Pickup mode |
+|---|---|---|
+| Bowness | 3 units (as 3130) | **13 units** |
+| Southland | 3 units (as 3130) | **5 units** |
+| Brentwood | 3 units (as 3130) | **1 unit** |
+
+Same product, same minute. Delivery mode is not wrong — it answers a
+delivery-zone question — but it cannot answer "who has it on the shelf."
+
 ### Verify which store was actually priced
 
-The page prices itself via `POST app.cannacabana.com/api/product/scan-single-item/<id>`.
-Attach a passive response listener and compare that `<id>` to the store you
-selected. They usually agree — but not always:
+Attach a passive response listener to
+`POST app.cannacabana.com/api/product/scan-single-item/<id>` and compare that
+`<id>` to the store you selected. Record it as `api_store_id` /
+`store_id_match`.
 
-| Selected | Priced as | |
-|---|---|---|
-| 3412 Medicine Hat | 3412 | ✅ |
-| 5794 Fort McMurray | 5794 | ✅ |
-| 8230 Brentwood | **3130 District** | ❌ |
-
-Record it as `api_store_id` / `store_id_match`. Without this check a
-neighbouring store's price lands in your data looking completely normal.
+In pickup mode these should always agree. Keep the check anyway — it is what
+caught the hub substitution in the first place, and a `store_id_match=0` is
+now a precise signal that the delivery flag has regressed.
 
 > [!NOTE]
 > This only *observes* a call the page makes anyway. It does not call the API.

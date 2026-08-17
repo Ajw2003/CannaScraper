@@ -96,12 +96,29 @@ def _read_watchlist() -> list[str]:
     return out
 
 
-def resolve_watchlist(catalog: list[dict] | None = None,
-                      verbose: bool = True) -> list[dict]:
-    """Match each watchlist line to a catalog variant.
+def search(terms: str, catalog: list[dict] | None = None,
+           limit: int = 40) -> list[dict]:
+    """Find catalog variants whose title/brand matches every word in `terms`.
+
+    Use this to look up a SKU before scraping: `python catalog.py --find "og kush"`.
+    """
+    catalog = catalog if catalog is not None else get_catalog(verbose=False)
+    words = [w for w in terms.lower().split() if w]
+    hits = []
+    for v in catalog:
+        hay = f"{v['title']} {v['brand']} {v['category']} {v['size']}".lower()
+        if all(w in hay for w in words):
+            hits.append(v)
+    hits.sort(key=lambda v: (v["brand"], v["title"], v["size"]))
+    return hits[:limit]
+
+
+def resolve_terms(terms: list[str], catalog: list[dict] | None = None,
+                  verbose: bool = True, label: str = "Watchlist") -> list[dict]:
+    """Match each term to a catalog variant.
 
     Order: exact SKU -> exact handle -> case-insensitive title substring.
-    Unmatched lines are reported loudly and skipped; a silently dropped entry
+    Unmatched terms are reported loudly and skipped; a silently dropped entry
     is an easy way to end up with a quietly incomplete dataset.
     """
     catalog = catalog if catalog is not None else get_catalog(verbose=verbose)
@@ -115,7 +132,7 @@ def resolve_watchlist(catalog: list[dict] | None = None,
     targets, unmatched = [], []
     seen: set = set()
 
-    for line in _read_watchlist():
+    for line in terms:
         hits: list[dict] = []
 
         if line in by_sku:
@@ -140,19 +157,41 @@ def resolve_watchlist(catalog: list[dict] | None = None,
                 targets.append(v)
 
     if verbose:
-        print(f"\nWatchlist: {len(targets)} variant(s) resolved.")
+        print(f"\n{label}: {len(targets)} variant(s) resolved.")
         for v in targets:
             print(f"  [{v['sku'] or '-':>8}] {v['title']} ({v['size']}) — {v['brand']}")
         if unmatched:
-            print(f"\n  !! {len(unmatched)} watchlist line(s) MATCHED NOTHING:")
+            print(f"\n  !! {len(unmatched)} {label.lower()} entr(ies) MATCHED NOTHING:")
             for u in unmatched:
                 print(f"     - {u}")
 
     return targets
 
 
+def resolve_watchlist(catalog: list[dict] | None = None,
+                      verbose: bool = True) -> list[dict]:
+    """Resolve every line of watchlist.txt."""
+    return resolve_terms(_read_watchlist(), catalog, verbose=verbose)
+
+
 if __name__ == "__main__":
     import sys
+
+    if "--find" in sys.argv:
+        q = " ".join(sys.argv[sys.argv.index("--find") + 1:])
+        if not q:
+            print('usage: python catalog.py --find "og kush"')
+            raise SystemExit(2)
+        hits = search(q)
+        print(f'\n{len(hits)} match(es) for {q!r}:\n')
+        print(f"  {'SKU':>8}  {'brand':<18} {'size':<10} {'category':<14} title")
+        for v in hits:
+            print(f"  {v['sku'] or '-':>8}  {v['brand'][:18]:<18} {v['size'][:10]:<10} "
+                  f"{v['category'][:14]:<14} {v['title'][:44]}")
+        print("\nScrape one across every store with:")
+        if hits:
+            print(f"  python main.py --product {hits[0]['sku'] or hits[0]['handle']}")
+        raise SystemExit(0)
 
     cat = get_catalog(refresh="--refresh" in sys.argv)
     print(f"\nCatalog: {len(cat)} variants")
