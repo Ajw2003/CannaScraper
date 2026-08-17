@@ -167,6 +167,29 @@ and elite price, **exact quantity**, gram equivalence, and **THC/CBD levels**.
 
 Roughly 1,000–1,250 products per store; ~110,000 rows for Alberta.
 
+### The HTML report
+
+Every store you checked appears — the ones with stock first, then the rest
+marked **not in stock**, collapsed behind a toggle:
+
+```
+[x] Show 88 stores without it
+Freeze Dried Rosin Rings Gummies · in stock at 4 of 92 checked
+```
+
+Two distinctions the page is careful about:
+
+- **"not in stock"** vs **"not checked"** — the index only holds in-stock items,
+  so a store with no row genuinely doesn't have the product. A store outside
+  the index says "not checked" instead, so a coverage gap never poses as an
+  answer.
+- The header counts **stores checked**, not rows returned. "4 of 92" is the
+  honest figure; counting rows would have said "4 of 4".
+
+The toggle is **pure CSS** (a hidden checkbox plus a sibling selector), so the
+report stays one self-contained file with no JavaScript — it opens from disk,
+works offline, and can be emailed as-is.
+
 ### Pricing tiers — ELITE vs Member
 
 Every product sits in exactly **one** discount tier. The site's own logic:

@@ -45,6 +45,30 @@ tr:last-child td{border-bottom:0}
 .save{color:var(--ok);white-space:nowrap}
 .save small{opacity:.75}
 tr.muted td{opacity:.5}
+
+/* Show/hide stores without the product, in pure CSS -- a checkbox plus the
+   sibling combinator, so the page needs no JavaScript and stays one portable
+   file. #showall must precede .card in the DOM for `~` to reach the rows. */
+#showall{position:absolute;opacity:0;pointer-events:none}
+.toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+  font-size:13px;color:var(--mut);border:1px solid var(--line);
+  background:var(--card);border-radius:20px;padding:6px 14px;margin-bottom:22px;
+  user-select:none}
+.toggle:hover{color:var(--fg)}
+.toggle .box{width:14px;height:14px;border:1.5px solid var(--mut);
+  border-radius:4px;display:inline-block;position:relative;flex:none}
+#showall:checked ~ .toggle .box{background:var(--ok);border-color:var(--ok)}
+#showall:checked ~ .toggle .box::after{content:"";position:absolute;left:4px;
+  top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;
+  transform:rotate(45deg)}
+#showall:checked ~ .toggle .on{display:inline}
+#showall:checked ~ .toggle .off{display:none}
+.toggle .on{display:none}
+
+tr.muted{display:none}
+#showall:checked ~ .card tr.muted{display:table-row}
+tr.hint td{color:var(--mut);font-size:13px;padding:12px 16px}
+#showall:checked ~ .card tr.hint{display:none}
 .store{font-weight:600}
 .city{color:var(--mut);font-size:13px}
 .empty{padding:26px 16px;color:var(--mut)}
@@ -123,6 +147,7 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
         groups.setdefault((r.get("sku"), r.get("title"), r.get("size")), []).append(r)
 
     parts = []
+    hidden_total = [0]          # list so the per-card loop can add to it
     for (sku, title, size), items in groups.items():
         items.sort(key=lambda r: (
             -(r.get("api_stock") or 0),
@@ -153,6 +178,18 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
                 "</tr>"
             )
 
+        # A card whose rows are all hidden would look broken, so leave a line
+        # explaining what was collapsed.
+        n_hidden = len(items) - len(have)
+        if n_hidden:
+            hidden_total[0] += n_hidden
+            noun = "store" if n_hidden == 1 else "stores"
+            body.append(
+                f'<tr class="hint"><td colspan="{5 + (1 if show_dist else 0)}">'
+                f'{n_hidden} more {noun} checked &mdash; none in stock. '
+                f'Use <em>Show stores without it</em> above to list them.'
+                f'</td></tr>')
+
         badge = ('<span class="pill elite">ELITE members only</span>'
                  if is_elite else "")
         cols = 5 + (1 if show_dist else 0)
@@ -181,12 +218,24 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
         sub.append(f"Near {html.escape(location)}")
     sub.append(f'Data <span class="{"stale" if stale else ""}">{_age(age_hours)}</span>')
 
+    n_hidden = hidden_total[0]
+    toggle = ""
+    if n_hidden:
+        noun = "store" if n_hidden == 1 else "stores"
+        toggle = (
+            '<input type="checkbox" id="showall">'
+            '<label class="toggle" for="showall"><span class="box"></span>'
+            f'<span class="off">Show {n_hidden} {noun} without it</span>'
+            f'<span class="on">Hide {n_hidden} {noun} without it</span>'
+            '</label>')
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stock — {html.escape(query or 'Canna Cabana')}</title>
 <style>{CSS}</style></head><body><div class="wrap">
 <h1>Where it's in stock</h1>
 <div class="sub">{' &middot; '.join(sub)}</div>
+{toggle}
 {''.join(parts) or '<div class="card"><div class="empty">Nothing to show.</div></div>'}
 <footer>Canna Cabana stock lookup &middot; generated {datetime.now():%Y-%m-%d %H:%M}</footer>
 </div></body></html>"""
