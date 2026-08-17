@@ -1,8 +1,9 @@
 @echo off
 REM Where is it in stock?
 REM
-REM   Double-click                          -> prompts for everything
-REM   find.bat "grape gas"                  -> nearest 10, default source
+REM   Double-click  -> keeps asking until you quit
+REM
+REM   find.bat "grape gas"                  -> nearest 10, runs once and exits
 REM   find.bat "grape gas" 25               -> nearest 25
 REM   find.bat "grape gas" 25 Calgary       -> nearest 25 to Calgary
 REM   find.bat "grape gas" all              -> every Alberta store
@@ -13,11 +14,8 @@ REM   index    instant, from the nightly stock index
 REM   live     check stores now via the fast API      (~12s for 10 stores)
 REM   web      real browser, slowest but independent  (~85s for 10 stores)
 REM
-REM   find.bat "grape gas" 10 Calgary live
-REM   find.bat "grape gas" all "" index
-REM
-REM Accepting arguments also makes this testable without a human at the
-REM keyboard, which prompt-only batch files are not.
+REM Argument mode runs once and exits so it stays scriptable, and testable
+REM without a human at the keyboard. Interactive mode loops.
 REM
 REM Uses goto labels rather than if/else blocks: cmd mis-parses quoted
 REM assignments inside parenthesised blocks.
@@ -26,44 +24,53 @@ cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" goto :nosetup
 
+REM ---- argument mode: one shot ---------------------------------------------
+if "%~1"=="" goto :interactive
+
 set "PRODUCT=%~1"
 set "HOWMANY=%~2"
 set "PROV=%~3"
 set "SRC="
-
-REM The source keyword may arrive in any trailing slot.
+set "WHERE="
 call :readsrc "%~2"
 call :readsrc "%~3"
 call :readsrc "%~4"
-
-REM ...and must not then be mistaken for a width or a province.
 call :clearsrc HOWMANY "%HOWMANY%"
 call :clearsrc PROV "%PROV%"
+call :runsearch
+exit /b 0
 
-if not "%PRODUCT%"=="" goto :haveproduct
-
+REM ---- interactive mode: loop ----------------------------------------------
+:interactive
 echo.
 echo   ==========================================
 echo    Canna Cabana - where is it in stock?
 echo   ==========================================
-echo.
-set /p PRODUCT="  What are you looking for?  "
-if "%PRODUCT%"=="" goto :nothing
+
+:mainloop
+REM Every prompt is re-read each pass, so stale answers never leak between
+REM searches -- that was the bug that made this single-use.
+set "PRODUCT="
+set "HOWMANY="
+set "PROV="
+set "WHERE="
+set "SRC="
+set "SRCPICK="
+set "AGAIN="
 
 echo.
-echo   How wide should the search be?
-echo     [Enter]  nearest 10 stores
-echo      25      nearest 25 stores
-echo      ALL     every store in the province
+set /p PRODUCT="  What are you looking for?  (Q to quit)  "
+if "%PRODUCT%"=="" goto :bye
+if /i "%PRODUCT%"=="Q" goto :bye
+if /i "%PRODUCT%"=="QUIT" goto :bye
+if /i "%PRODUCT%"=="EXIT" goto :bye
+
 echo.
+echo   How wide?   [Enter] nearest 10    25 = nearest 25    ALL = whole province
 set /p HOWMANY="  Choice:  "
 
 echo.
-echo   Where should the answer come from?
-echo     [Enter]  Index - instant, from the nightly stock index
-echo      L       Live  - check the stores right now  (fast API)
-echo      W       Web   - real browser fallback       (slow, independent)
-echo.
+echo   Source?     [Enter] Index (instant)    L = Live (now)    W = Web (browser)
 set /p SRCPICK="  Choice:  "
 if /i "%SRCPICK%"=="L" set "SRC=live"
 if /i "%SRCPICK%"=="LIVE" set "SRC=live"
@@ -71,56 +78,61 @@ if /i "%SRCPICK%"=="W" set "SRC=web"
 if /i "%SRCPICK%"=="WEB" set "SRC=web"
 if "%SRC%"=="" set "SRC=index"
 
-:haveproduct
+if "%HOWMANY%"=="" set "HOWMANY=10"
+if /i "%HOWMANY%"=="ALL" goto :ask_prov
+if /i "%HOWMANY%"=="A" goto :ask_prov
+
+echo.
+set /p WHERE="  Near which city/postal code? [Enter = default]  "
+goto :go
+
+:ask_prov
+echo.
+echo   Alberta 92  ^|  Ontario 100  ^|  Saskatchewan 13  ^|  Manitoba 12  ^|  BC 8
+set /p PROV="  Which province? [Enter = Alberta]  "
+
+:go
+echo.
+call :runsearch
+
+echo.
+echo   ------------------------------------------
+set /p AGAIN="  Another search? [Enter = yes, Q = quit]  "
+if /i "%AGAIN%"=="Q" goto :bye
+if /i "%AGAIN%"=="QUIT" goto :bye
+if /i "%AGAIN%"=="N" goto :bye
+goto :mainloop
+
+REM ---- the actual search ---------------------------------------------------
+:runsearch
 if "%HOWMANY%"=="" set "HOWMANY=10"
 if "%SRC%"=="" set "SRC=index"
 
-REM Translate the source into flags.
 set "SRCFLAGS=--cached"
 if /i "%SRC%"=="live" set "SRCFLAGS=--fetcher api --refresh"
 if /i "%SRC%"=="web"  set "SRCFLAGS=--fetcher browser --refresh"
 
-if /i "%HOWMANY%"=="ALL" goto :allstores
-if /i "%HOWMANY%"=="A"   goto :allstores
+if /i "%HOWMANY%"=="ALL" goto :rs_all
+if /i "%HOWMANY%"=="A"   goto :rs_all
 
-REM ---- nearest N -----------------------------------------------------------
-if not "%PROV%"=="" set "WHERE=%PROV%"
-if not "%WHERE%"=="" goto :runnear
-if not "%~1"=="" goto :runnear_default
-echo.
-set /p WHERE="  Near which city/postal code? [Enter = default]  "
-if "%WHERE%"=="" goto :runnear_default
-
-:runnear
-echo.
+REM For nearest-N, a third argument means "near here".
+if "%WHERE%"=="" if not "%PROV%"=="" set "WHERE=%PROV%"
+if "%WHERE%"=="" goto :rs_near_default
 .venv\Scripts\python.exe main.py --product "%PRODUCT%" --near "%WHERE%" --top %HOWMANY% %SRCFLAGS%
-goto :done
+exit /b 0
 
-:runnear_default
-echo.
+:rs_near_default
 .venv\Scripts\python.exe main.py --product "%PRODUCT%" --top %HOWMANY% %SRCFLAGS%
-goto :done
+exit /b 0
 
-REM ---- whole province ------------------------------------------------------
-:allstores
-if not "%PROV%"=="" goto :runall
-if not "%~1"=="" goto :runall_default
-echo.
-echo   Alberta 92  ^|  Ontario 100  ^|  Saskatchewan 13
-echo   Manitoba 12 ^|  British Columbia 8
-echo.
-set /p PROV="  Which province? [Enter = Alberta]  "
-if "%PROV%"=="" goto :runall_default
-
-:runall
-echo.
+:rs_all
+if "%PROV%"=="" goto :rs_all_default
 .venv\Scripts\python.exe main.py --product "%PRODUCT%" --all --province "%PROV%" %SRCFLAGS%
-goto :done
+exit /b 0
 
-:runall_default
-echo.
+:rs_all_default
 .venv\Scripts\python.exe main.py --product "%PRODUCT%" --all %SRCFLAGS%
-goto :done
+exit /b 0
 
 REM ---- helpers -------------------------------------------------------------
 :readsrc
@@ -148,14 +160,10 @@ if /i "%~2"=="r"       set "%~1="
 exit /b 0
 
 REM ---- exits ---------------------------------------------------------------
-:done
+:bye
 echo.
-if "%~1"=="" pause
-exit /b 0
-
-:nothing
-echo   Nothing entered. Closing.
-timeout /t 2 >nul
+echo   Bye.
+timeout /t 1 >nul
 exit /b 0
 
 :nosetup

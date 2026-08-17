@@ -167,8 +167,9 @@ async def run(args: argparse.Namespace) -> int:
                          for r in cached)
         src = "STOCK INDEX" if from_index else "CACHE"
         print(f"\n[source: {src} — {age:.1f}h old]")
+        cached = fill_missing_stores(cached, store_list, targets, conn)
         show_results(cached, age, args, targets, location_label,
-                     live=False, conn=conn)
+                     live=False, conn=conn, checked=len(store_list))
         if not args.cached:
             print(f"\n(Reused data {age:.1f}h old. Use --refresh to check now.)")
         return 0
@@ -178,9 +179,13 @@ async def run(args: argparse.Namespace) -> int:
         # "never looked" or "looked, and it isn't in stock". Say which.
         covered, idx_age = db.index_coverage(conn, store_ids)
         if covered:
-            print(f"\nNOT IN STOCK at any of the {covered} indexed store(s).")
-            print(f"(From the stock index, {idx_age:.1f}h old. "
-                  f"Use --refresh to check live.)")
+            # "Nowhere near you has this" is a real answer, so show it the same
+            # way as any other -- listing every store checked, and opening the
+            # report. Returning early here left the page unwritten.
+            print(f"\n[source: STOCK INDEX — {idx_age:.1f}h old]")
+            rows = fill_missing_stores([], store_list, targets, conn)
+            show_results(rows, idx_age, args, targets, location_label,
+                         live=False, conn=conn, checked=len(store_list))
             return 0
         print("\nNo index or cached data covers those stores yet.")
         print("Run:  python index_builder.py     (builds the province index)")
@@ -253,10 +258,58 @@ async def run(args: argparse.Namespace) -> int:
     by_id = {s["store_id"]: s for s in store_list}
     for r in fresh:
         r["distance_km"] = by_id.get(r["store_id"], {}).get("distance_km")
-    show_results(fresh, 0.0, args, targets, location_label, live=True, conn=conn)
+    fresh = fill_missing_stores(fresh, store_list, targets, conn)
+    show_results(fresh, 0.0, args, targets, location_label, live=True, conn=conn,
+                 checked=len(store_list))
 
     conn.close()
     return 0 if not failed_stores else 1
+
+
+def fill_missing_stores(rows: list[dict], store_list: list[dict],
+                        targets: list[dict], conn) -> list[dict]:
+    """Add a row for every store we checked that returned nothing.
+
+    The stock index holds in-stock items only, so a store with no row simply
+    isn't stocking the product. Dropping it makes "1 of 1 checked" out of a
+    six-store search, which reads as though we barely looked. Every store we
+    checked should appear, with an explicit answer.
+    """
+    indexed = db.indexed_store_ids(conn, [s["store_id"] for s in store_list])
+    have = {(r["store_id"], str(r.get("sku"))) for r in rows}
+    out = list(rows)
+
+    for v in targets:
+        sku = str(v.get("sku") or "")
+        if not sku:
+            continue
+        for s in store_list:
+            if (s["store_id"], sku) in have:
+                continue
+            known = s["store_id"] in indexed
+            out.append({
+                "scraped_at": None,
+                "store_id": s["store_id"],
+                "store_name": s.get("name", ""),
+                "city": s.get("city", ""),
+                "province": s.get("province", ""),
+                "distance_km": s.get("distance_km"),
+                "sku": sku,
+                "handle": v.get("handle", ""),
+                "title": v.get("title", ""),
+                "brand": v.get("brand", ""),
+                "category": v.get("category", ""),
+                "size": v.get("size", ""),
+                "price": None, "member_price": None,
+                "api_stock": 0 if known else None,
+                "api_elite_price": None, "api_member_price": None,
+                "is_elite": None,
+                "available": 0,
+                "carried": 0 if known else None,
+                "stock_text": "Not in stock" if known else "Not checked",
+                "status": "ok",
+            })
+    return out
 
 
 def tier_price(row: dict) -> tuple[str, float | None]:
@@ -355,7 +408,8 @@ async def compare_backends(store_list, targets) -> int:
 
 
 def show_results(rows: list[dict], age: float | None, args, targets,
-                 location_label: str = "", live: bool = True, conn=None) -> None:
+                 location_label: str = "", live: bool = True, conn=None,
+                 checked: int | None = None) -> None:
     """Print the ranked answer, then build the HTML report."""
     rows = sorted(rows, key=lambda r: (
         str(r.get("sku")),
@@ -368,7 +422,10 @@ def show_results(rows: list[dict], age: float | None, args, targets,
     print("\n" + "-" * 74)
     if have:
         show_dist = any(r.get("distance_km") is not None for r in have)
-        print(f"IN STOCK at {len(have)} of {len(rows)} store(s) checked:\n")
+        # Count stores we looked at, not rows we got back -- the index omits
+        # stores where an item is out of stock, so len(rows) understates it.
+        n_checked = checked if checked is not None else len(rows)
+        print(f"IN STOCK at {len(have)} of {n_checked} store(s) checked:\n")
         hdr = f"  {'units':>5}  {'store':<26} {'city':<16}"
         if show_dist:
             hdr += f" {'km':>6}"
@@ -392,14 +449,15 @@ def show_results(rows: list[dict], age: float | None, args, targets,
                   f"{d} {('$%.2f' % market) if market else '-':>8}"
                   f" {label:>6} {('$%.2f' % deal) if deal else '-':>8} {saving:>13}")
     else:
-        checked = len(rows)
-        print(f"NOT IN STOCK at any of the {checked} store(s) checked."
-              + ("" if checked > 5 else "  Try --top 25 to widen the search."))
+        n_checked = checked if checked is not None else len(rows)
+        print(f"NOT IN STOCK at any of the {n_checked} store(s) checked."
+              + ("" if n_checked > 5 else "  Try --top 25 to widen the search."))
 
-    if not args.no_report and rows:
+    if not args.no_report:
         q = " ".join(args.product) if args.product else "watchlist"
         path = report.write_and_open(rows, query=q, age_hours=age,
-                                     location=location_label)
+                                     location=location_label,
+                                     checked=checked)
         print(f"\nReport: {path}")
 
 

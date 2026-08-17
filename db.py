@@ -256,6 +256,22 @@ def index_coverage(conn: sqlite3.Connection,
     return n, age
 
 
+def indexed_store_ids(conn: sqlite3.Connection,
+                      store_ids: list[str] | None = None) -> set[str]:
+    """Stores that appear in some stock index run.
+
+    If a store is indexed and a product has no row for it, the product is not
+    in stock there -- that is an answer, not missing data, and the report says
+    so rather than silently omitting the store.
+    """
+    sql = "SELECT DISTINCT store_id FROM observations WHERE run_id LIKE 'index-%'"
+    params: list = []
+    if store_ids:
+        sql += f" AND store_id IN ({','.join('?' * len(store_ids))})"
+        params = [str(s) for s in store_ids]
+    return {r[0] for r in conn.execute(sql, params)}
+
+
 def cache_age_hours(rows: list[dict]) -> float | None:
     """Age of the freshest row, in hours."""
     stamps = [r.get("scraped_at") for r in rows if r.get("scraped_at")]

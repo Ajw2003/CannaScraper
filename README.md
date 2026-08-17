@@ -327,6 +327,18 @@ find.bat "grape gas" all                REM every Alberta store
 find.bat "grape gas" all Ontario        REM every Ontario store
 ```
 
+### The launcher loops
+
+Double-click `find.bat` and it keeps asking until you quit — search, read the
+answer, search again, no reopening. `Q` (or Enter at an empty product prompt)
+exits.
+
+Passing arguments runs **once and exits**, so it stays scriptable and testable:
+
+```bash
+find.bat "grape gas" 5 Calgary live
+```
+
 ### Three sources, one launcher
 
 `find.bat` asks where the answer should come from, and every run prints which

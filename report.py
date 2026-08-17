@@ -44,6 +44,7 @@ tr:last-child td{border-bottom:0}
 @media(prefers-color-scheme:dark){.pill.elite{background:#3a2f12;color:#e6c88a}}
 .save{color:var(--ok);white-space:nowrap}
 .save small{opacity:.75}
+tr.muted td{opacity:.5}
 .store{font-weight:600}
 .city{color:var(--mut);font-size:13px}
 .empty{padding:26px 16px;color:var(--mut)}
@@ -66,8 +67,11 @@ def _age(hours: float | None) -> str:
 
 def _stock_cell(r: dict) -> str:
     qty, carried = r.get("api_stock"), r.get("carried")
+    txt = (r.get("stock_text") or "").lower()
+    if txt == "not checked" or (carried is None and qty is None):
+        return '<span class="s-no">not checked</span>'
     if not carried:
-        return '<span class="s-no">not carried</span>'
+        return '<span class="s-no">not in stock</span>'
     if qty is None:
         avail = r.get("available")
         return ('<span class="pill s-ok">in stock</span>' if avail
@@ -112,7 +116,7 @@ def _savings(r: dict) -> str:
 
 
 def build(rows: list[dict], query: str = "", age_hours: float | None = None,
-          location: str = "") -> str:
+          location: str = "", checked: int | None = None) -> str:
     """Render rows (dicts from db) grouped by product, best stock first."""
     groups: dict[tuple, list[dict]] = {}
     for r in rows:
@@ -136,8 +140,9 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
             dist = (f'{r["distance_km"]:.1f} km'
                     if r.get("distance_km") is not None else "—")
             _, deal = _tier(r)
+            none_here = not r.get("available")
             body.append(
-                "<tr>"
+                f'<tr class="{"muted" if none_here else ""}">'
                 f'<td><div class="store">{html.escape(str(r.get("store_name") or ""))}</div>'
                 f'<div class="city">{html.escape(str(r.get("city") or ""))}</div></td>'
                 f'<td>{_stock_cell(r)}</td>'
@@ -151,12 +156,17 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
         badge = ('<span class="pill elite">ELITE members only</span>'
                  if is_elite else "")
         cols = 5 + (1 if show_dist else 0)
+        # Count stores looked at, not rows returned: stores with none of the
+        # product are included in `items` precisely so this reads honestly.
+        n_checked = checked if checked is not None else len(items)
+        summary = (f"in stock at {len(have)} of {n_checked} checked"
+                   if have else f"not in stock at any of {n_checked} checked")
 
         parts.append(f"""
 <div class="card">
   <div class="hd">{html.escape(str(title or "?"))} {badge}
     <small>&nbsp;{html.escape(str(size or ""))} &middot; SKU {html.escape(str(sku or "?"))}
-    &middot; in stock at {len(have)} of {len(items)} checked</small></div>
+    &middot; {summary}</small></div>
   <table><thead><tr><th>Store</th><th>Stock</th>
   {'<th class="n">Distance</th>' if show_dist else ''}
   <th class="n">Market</th><th class="n">{tier_label}</th><th class="n">You save</th></tr></thead>
