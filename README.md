@@ -242,9 +242,28 @@ repeated. It overrides `watchlist.txt` for that run without editing anything.
 ```bash
 find.bat "grape gas"                    REM nearest 10
 find.bat "grape gas" 25                 REM nearest 25
+find.bat "grape gas" 25 Calgary         REM nearest 25 to Calgary
 find.bat "grape gas" all                REM every Alberta store
 find.bat "grape gas" all Ontario        REM every Ontario store
 ```
+
+### Fresh vs cached
+
+Interactively, `find.bat` asks — **Enter does a live check**, `C` reuses recent
+results. From the command line, add `refresh` (or `r`) as the last argument:
+
+```bash
+find.bat "grape gas" 10 Calgary refresh
+find.bat "grape gas" all "" refresh
+```
+
+A plain `main.py` run reuses cached results only if they're under
+`config.CACHE_FRESH_H` (**1 hour**) old, then re-checks live. `--refresh`
+always checks; `--cached` never does.
+
+That window is deliberately short: a live 10-store lookup costs ~12 s now, and
+stock moves fast enough that hours-old numbers will send you to a store that
+just sold out. Raise it if you sweep whole provinces frequently.
 
 Stores flagged `store_id_match=0` are **excluded** from this list — their stock
 figure belongs to whichever store the site actually answered for.

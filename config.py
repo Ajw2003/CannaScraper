@@ -27,8 +27,14 @@ GEOCODE_CACHE = "geocode.json"
 # Nominatim asks that clients identify themselves. Free, no key required.
 NOMINATIM_UA = "CannaCabanaScraper/1.0 (personal stock lookup)"
 
-# How stale cached results may be before we suggest a refresh, in hours.
-CACHE_FRESH_H = 12
+# How stale cached results may be before a plain run re-checks live.
+#
+# This was 12h when a 10-store lookup cost ~90 seconds via the browser and
+# caching was the only thing making the tool usable. The API backend does the
+# same lookup in ~12 seconds, so stale data now costs more than a re-check
+# does -- and stock moves fast (one store went 1 -> 10 units within hours).
+# Raise it if you sweep whole provinces often; --cached always forces reuse.
+CACHE_FRESH_H = 1
 
 # --- Fetch backend ---------------------------------------------------------
 # "browser" = drive a real Chromium (~8s per store per product).

@@ -1,11 +1,17 @@
 @echo off
 REM Where is it in stock?
 REM
-REM   Double-click            -> prompts for everything
-REM   find.bat "grape gas"    -> nearest 10
-REM   find.bat "grape gas" 25 -> nearest 25
-REM   find.bat "grape gas" all           -> every store in Alberta
-REM   find.bat "grape gas" all Ontario   -> every store in Ontario
+REM   Double-click                       -> prompts for everything
+REM   find.bat "grape gas"               -> nearest 10
+REM   find.bat "grape gas" 25            -> nearest 25
+REM   find.bat "grape gas" 25 Calgary    -> nearest 25 to Calgary
+REM   find.bat "grape gas" all           -> every Alberta store
+REM   find.bat "grape gas" all Ontario   -> every Ontario store
+REM
+REM Add "refresh" (or "r") as the LAST argument to force a live check
+REM instead of using cached results:
+REM   find.bat "grape gas" 10 Calgary refresh
+REM   find.bat "grape gas" all "" refresh
 REM
 REM Accepting arguments also makes this testable without a human at the
 REM keyboard, which prompt-only batch files are not.
@@ -20,6 +26,22 @@ if not exist ".venv\Scripts\python.exe" goto :nosetup
 set "PRODUCT=%~1"
 set "HOWMANY=%~2"
 set "PROV=%~3"
+set "FRESH=%~4"
+set "REFRESH="
+
+REM "refresh" may arrive in any trailing slot, so check them all.
+if /i "%~2"=="refresh" set "REFRESH=--refresh"
+if /i "%~2"=="r"       set "REFRESH=--refresh"
+if /i "%~3"=="refresh" set "REFRESH=--refresh"
+if /i "%~3"=="r"       set "REFRESH=--refresh"
+if /i "%~4"=="refresh" set "REFRESH=--refresh"
+if /i "%~4"=="r"       set "REFRESH=--refresh"
+
+REM ...and must not then be mistaken for a width or a province.
+if /i "%HOWMANY%"=="refresh" set "HOWMANY="
+if /i "%HOWMANY%"=="r"       set "HOWMANY="
+if /i "%PROV%"=="refresh"    set "PROV="
+if /i "%PROV%"=="r"          set "PROV="
 
 if not "%PRODUCT%"=="" goto :haveproduct
 
@@ -39,6 +61,20 @@ echo      ALL     every store in the province  ~2 minutes
 echo.
 set /p HOWMANY="  Choice:  "
 
+echo.
+echo   Check the stores live, or reuse recent results?
+echo     [Enter]  live check - current stock
+echo      C       cached     - instant, may be hours old
+echo.
+set /p FRESH="  Choice:  "
+if /i "%FRESH%"=="C" goto :cachedchoice
+if /i "%FRESH%"=="CACHED" goto :cachedchoice
+set "REFRESH=--refresh"
+goto :haveproduct
+
+:cachedchoice
+set "REFRESH="
+
 :haveproduct
 if "%HOWMANY%"=="" set "HOWMANY=10"
 
@@ -57,14 +93,14 @@ if "%WHERE%"=="" goto :runnear_default
 echo.
 echo   Checking %HOWMANY% stores near %WHERE%...
 echo.
-.venv\Scripts\python.exe main.py --product "%PRODUCT%" --near "%WHERE%" --top %HOWMANY%
+.venv\Scripts\python.exe main.py --product "%PRODUCT%" --near "%WHERE%" --top %HOWMANY% %REFRESH%
 goto :done
 
 :runnear_default
 echo.
 echo   Checking the %HOWMANY% nearest stores...
 echo.
-.venv\Scripts\python.exe main.py --product "%PRODUCT%" --top %HOWMANY%
+.venv\Scripts\python.exe main.py --product "%PRODUCT%" --top %HOWMANY% %REFRESH%
 goto :done
 
 REM ---- whole province ------------------------------------------------------
@@ -82,23 +118,19 @@ if "%PROV%"=="" goto :runall_default
 echo.
 echo   Checking every store in %PROV%. This takes about 2 minutes.
 echo.
-.venv\Scripts\python.exe main.py --product "%PRODUCT%" --all --province "%PROV%"
+.venv\Scripts\python.exe main.py --product "%PRODUCT%" --all --province "%PROV%" %REFRESH%
 goto :done
 
 :runall_default
 echo.
 echo   Checking every Alberta store. This takes about 2 minutes.
 echo.
-.venv\Scripts\python.exe main.py --product "%PRODUCT%" --all
+.venv\Scripts\python.exe main.py --product "%PRODUCT%" --all %REFRESH%
 goto :done
 
 REM ---- exits ---------------------------------------------------------------
 :done
 echo.
-echo   ------------------------------------------
-echo    Results are cached, so re-running is
-echo    instant. Add --refresh to force a check.
-echo   ------------------------------------------
 if "%~1"=="" pause
 exit /b 0
 
