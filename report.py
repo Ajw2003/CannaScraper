@@ -39,6 +39,11 @@ tr:last-child td{border-bottom:0}
 .s-ok{background:var(--okbg);color:var(--ok)}
 .s-low{background:var(--lowbg);color:var(--low)}
 .s-no{color:var(--none)}
+.pill.elite{background:#f3e6c8;color:#7a5a12;margin-left:8px;font-size:11px;
+      letter-spacing:.04em;text-transform:uppercase}
+@media(prefers-color-scheme:dark){.pill.elite{background:#3a2f12;color:#e6c88a}}
+.save{color:var(--ok);white-space:nowrap}
+.save small{opacity:.75}
 .store{font-weight:600}
 .city{color:var(--mut);font-size:13px}
 .empty{padding:26px 16px;color:var(--mut)}
@@ -81,6 +86,31 @@ def _money(v) -> str:
         return "—"
 
 
+def _tier(r: dict) -> tuple[str, float | None]:
+    """Which discount tier applies. ELITE and member are mutually exclusive."""
+    elite = r.get("api_elite_price")
+    member = r.get("member_price") or r.get("api_member_price")
+    if r.get("is_elite") and elite:
+        return "ELITE", elite
+    if member:
+        return "Member", member
+    if elite:
+        return "ELITE", elite
+    return "", None
+
+
+def _savings(r: dict) -> str:
+    market = r.get("price")
+    _, deal = _tier(r)
+    try:
+        if market and deal and float(deal) < float(market):
+            m, d = float(market), float(deal)
+            return f"−${m - d:.2f} <small>({100 * (m - d) / m:.0f}%)</small>"
+    except (TypeError, ValueError):
+        pass
+    return "—"
+
+
 def build(rows: list[dict], query: str = "", age_hours: float | None = None,
           location: str = "") -> str:
     """Render rows (dicts from db) grouped by product, best stock first."""
@@ -98,10 +128,14 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
         have = [r for r in items if r.get("available")]
         show_dist = any(r.get("distance_km") is not None for r in items)
 
+        is_elite = any(r.get("is_elite") for r in items)
+        tier_label = "ELITE" if is_elite else "Member"
+
         body = []
         for r in items:
             dist = (f'{r["distance_km"]:.1f} km'
                     if r.get("distance_km") is not None else "—")
+            _, deal = _tier(r)
             body.append(
                 "<tr>"
                 f'<td><div class="store">{html.escape(str(r.get("store_name") or ""))}</div>'
@@ -109,19 +143,24 @@ def build(rows: list[dict], query: str = "", age_hours: float | None = None,
                 f'<td>{_stock_cell(r)}</td>'
                 + (f'<td class="n">{dist}</td>' if show_dist else "")
                 + f'<td class="n">{_money(r.get("price"))}</td>'
-                f'<td class="n">{_money(r.get("member_price"))}</td>'
+                f'<td class="n">{_money(deal)}</td>'
+                f'<td class="n save">{_savings(r)}</td>'
                 "</tr>"
             )
 
+        badge = ('<span class="pill elite">ELITE members only</span>'
+                 if is_elite else "")
+        cols = 5 + (1 if show_dist else 0)
+
         parts.append(f"""
 <div class="card">
-  <div class="hd">{html.escape(str(title or "?"))}
+  <div class="hd">{html.escape(str(title or "?"))} {badge}
     <small>&nbsp;{html.escape(str(size or ""))} &middot; SKU {html.escape(str(sku or "?"))}
     &middot; in stock at {len(have)} of {len(items)} checked</small></div>
   <table><thead><tr><th>Store</th><th>Stock</th>
   {'<th class="n">Distance</th>' if show_dist else ''}
-  <th class="n">Price</th><th class="n">Member</th></tr></thead>
-  <tbody>{''.join(body) or '<tr><td class="empty" colspan=5>No results.</td></tr>'}</tbody></table>
+  <th class="n">Market</th><th class="n">{tier_label}</th><th class="n">You save</th></tr></thead>
+  <tbody>{''.join(body) or f'<tr><td class="empty" colspan={cols}>No results.</td></tr>'}</tbody></table>
 </div>""")
 
     stale = age_hours is not None and age_hours > 12

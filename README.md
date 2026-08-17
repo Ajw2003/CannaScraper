@@ -167,6 +167,35 @@ and elite price, **exact quantity**, gram equivalence, and **THC/CBD levels**.
 
 Roughly 1,000–1,250 products per store; ~110,000 rows for Alberta.
 
+### Pricing tiers — ELITE vs Member
+
+Every product sits in exactly **one** discount tier. The site's own logic:
+
+```js
+if (member_price > 0 && is_elite === false)  → show "Member"
+if (elite_price  > 0 && is_elite === true)   → show "Elite"
+```
+
+So a product is **either** Member-priced (free Cabana Club) **or** ELITE-priced
+(paid tier) — never both. There is no elite-vs-member difference to show per
+product, because only one ever applies. The meaningful comparison is
+**tier price vs market price**, which is what gets displayed:
+
+```
+  units  store          km   market   tier  you pay          save
+  Pufferz Grape Gas Disposable Vape   *** ELITE members only ***
+     10  Kensington    2.2   $35.99  ELITE   $28.79  -$7.20 (20%)
+      6  East Village  0.4   $35.99  ELITE   $28.44  -$7.55 (21%)
+```
+
+`is_elite` is stored per row. **16.3% of the Alberta index is ELITE-tier.**
+Verified against both endpoints, which agree exactly (SKU 203012: retail 35.99 /
+member 0 / elite 29.52 / is_elite true).
+
+Worth noting: **market price is flat chain-wide, but the discounted tier price
+varies by store** — the same vape is $28.44 in East Village and $29.90 in
+Beltline. That spread is invisible on their site and only shows up here.
+
 ### Two things that were verified before trusting it
 
 **It is exhaustive.** Eleven different search terms (`z`, `q`, `kush`, `og`,

@@ -198,6 +198,7 @@ class ApiFetcher:
             "api_elite_price": None,
             "api_equiv_g": None,
             "api_raw": "",
+            "is_elite": None,
             "status": "ok",
             "error": "",
         }
@@ -224,6 +225,10 @@ class ApiFetcher:
         except (TypeError, ValueError):
             ep = None
         row["api_elite_price"] = ep
+        # The scan endpoint has no is_elite flag, but the tiers are
+        # mutually exclusive, so it is recoverable: an ELITE price with
+        # no member price means an ELITE-tier product.
+        row["is_elite"] = 1 if (ep and not row.get("api_member_price")) else 0
 
         retail = row.get("api_price")
         carried = bool(retail and retail > 0)

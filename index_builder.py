@@ -130,6 +130,9 @@ def _row(store: dict, prod: dict, var: dict, now: str) -> dict:
         "api_member_price": member,
         "api_price": retail,
         "api_elite_price": p.get("elite_price") or None,
+        # Tiers are mutually exclusive: is_elite products carry an ELITE
+        # price and no member price, and vice versa.
+        "is_elite": 1 if p.get("is_elite") else 0,
         "api_equiv_g": p.get("equivalent_g"),
         # p["storeId"] is their internal id (e.g. 622 for our 3412); keep it
         # for cross-referencing without confusing it with our registry id.

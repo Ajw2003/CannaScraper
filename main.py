@@ -259,6 +259,32 @@ async def run(args: argparse.Namespace) -> int:
     return 0 if not failed_stores else 1
 
 
+def tier_price(row: dict) -> tuple[str, float | None]:
+    """Which discount tier applies, and what it costs.
+
+    A product is either ELITE-tier or Member-tier, never both: the site shows
+    the member price only when is_elite is false, and the ELITE price only when
+    it is true. So there is no elite-vs-member delta per product -- the useful
+    comparison is tier price vs market price.
+    """
+    elite = row.get("api_elite_price")
+    member = row.get("member_price") or row.get("api_member_price")
+    if row.get("is_elite") and elite:
+        return "ELITE", elite
+    if member:
+        return "member", member
+    if elite:                      # is_elite unknown (older rows)
+        return "ELITE", elite
+    return "-", None
+
+
+def tier_note(row: dict) -> str:
+    """A one-line flag for ELITE-only products."""
+    if row.get("is_elite"):
+        return "   *** ELITE members only — no Cabana Club price ***"
+    return ""
+
+
 async def compare_backends(store_list, targets) -> int:
     """Run both backends over the same stores and diff the answers.
 
@@ -346,20 +372,25 @@ def show_results(rows: list[dict], age: float | None, args, targets,
         hdr = f"  {'units':>5}  {'store':<26} {'city':<16}"
         if show_dist:
             hdr += f" {'km':>6}"
-        print(hdr + f" {'price':>8} {'member':>8}")
+        print(hdr + f" {'market':>8} {'tier':>6} {'you pay':>8} {'save':>13}")
         last = None
         for r in have:
             if r.get("sku") != last:
-                print(f"\n  {r.get('title')} ({r.get('size')})  [SKU {r.get('sku')}]")
+                print(f"\n  {r.get('title')} ({r.get('size')})  [SKU {r.get('sku')}]"
+                      + tier_note(r))
                 last = r.get("sku")
             d = (f" {r['distance_km']:>6.1f}"
                  if show_dist and r.get("distance_km") is not None
                  else (" " * 7 if show_dist else ""))
-            price = f"${r['price']:.2f}" if r.get("price") else "-"
-            memb = f"${r['member_price']:.2f}" if r.get("member_price") else "-"
+            market = r.get("price")
+            label, deal = tier_price(r)
+            saving = ""
+            if market and deal and deal < market:
+                saving = f"-${market - deal:.2f} ({100*(market-deal)/market:.0f}%)"
             print(f"  {r.get('api_stock') if r.get('api_stock') is not None else '?':>5}"
                   f"  {str(r.get('store_name'))[:26]:<26} {str(r.get('city'))[:16]:<16}"
-                  f"{d} {price:>8} {memb:>8}")
+                  f"{d} {('$%.2f' % market) if market else '-':>8}"
+                  f" {label:>6} {('$%.2f' % deal) if deal else '-':>8} {saving:>13}")
     else:
         checked = len(rows)
         print(f"NOT IN STOCK at any of the {checked} store(s) checked."
