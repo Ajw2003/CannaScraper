@@ -220,6 +220,32 @@ there when you arrive. One product across all 92 Alberta stores takes about
 `--product` accepts a SKU, handle, product URL, or title text, and can be
 repeated. It overrides `watchlist.txt` for that run without editing anything.
 
+### Checking every store in a province
+
+`--top` limits to the nearest N. To sweep them all, use `--all`:
+
+```bash
+.venv\Scripts\python main.py --product 203012 --all
+.venv\Scripts\python main.py --product 203012 --all --province Ontario
+```
+
+| Province | Stores | Time (API) |
+|---|---|---|
+| Alberta (default) | 92 | ~2 min |
+| Ontario | 100 | ~2.2 min |
+| Saskatchewan | 13 | ~20 s |
+| Manitoba | 12 | ~20 s |
+| British Columbia | 8 | ~12 s |
+
+`find.bat` also takes arguments, so you can skip the prompts:
+
+```bash
+find.bat "grape gas"                    REM nearest 10
+find.bat "grape gas" 25                 REM nearest 25
+find.bat "grape gas" all                REM every Alberta store
+find.bat "grape gas" all Ontario        REM every Ontario store
+```
+
 Stores flagged `store_id_match=0` are **excluded** from this list — their stock
 figure belongs to whichever store the site actually answered for.
 
