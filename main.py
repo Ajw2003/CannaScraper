@@ -163,15 +163,28 @@ async def run(args: argparse.Namespace) -> int:
         by_id = {s["store_id"]: s for s in store_list}
         for r in cached:
             r["distance_km"] = by_id.get(r["store_id"], {}).get("distance_km")
+        from_index = any(str(r.get("run_id", "")).startswith("index-")
+                         for r in cached)
+        src = "STOCK INDEX" if from_index else "CACHE"
+        print(f"\n[source: {src} — {age:.1f}h old]")
         show_results(cached, age, args, targets, location_label,
                      live=False, conn=conn)
         if not args.cached:
-            print(f"\n(Cached from {age:.1f}h ago. Use --refresh to check now.)")
+            print(f"\n(Reused data {age:.1f}h old. Use --refresh to check now.)")
         return 0
 
     if args.cached:
-        print("\nNothing cached for that product yet — run without --cached "
-              "to check the stores.")
+        # The index stores in-stock items only, so "no rows" can mean either
+        # "never looked" or "looked, and it isn't in stock". Say which.
+        covered, idx_age = db.index_coverage(conn, store_ids)
+        if covered:
+            print(f"\nNOT IN STOCK at any of the {covered} indexed store(s).")
+            print(f"(From the stock index, {idx_age:.1f}h old. "
+                  f"Use --refresh to check live.)")
+            return 0
+        print("\nNo index or cached data covers those stores yet.")
+        print("Run:  python index_builder.py     (builds the province index)")
+        print("or drop --cached to check them live now.")
         return 1
 
     skip: set[str] = set()
@@ -191,6 +204,8 @@ async def run(args: argparse.Namespace) -> int:
     fetcher = fetchers.get_fetcher(args.fetcher)
     if args.headed and hasattr(fetcher, "_headless"):
         fetcher._headless = False
+    print(f"[source: LIVE via {fetcher.name.upper()}"
+          f"{' (real browser)' if fetcher.name == 'browser' else ''}]\n")
 
     async with fetcher as f:
         for i, st in enumerate(todo, 1):

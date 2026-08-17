@@ -220,6 +220,40 @@ def latest_observations(conn: sqlite3.Connection, skus: list[str] | None = None,
     return out
 
 
+def index_coverage(conn: sqlite3.Connection,
+                   store_ids: list[str]) -> tuple[int, float | None]:
+    """How many of these stores appear in a stock index, and how old is it?
+
+    Lets us tell "we've never looked" apart from "the index covers this store
+    and the product simply isn't in stock" -- the index holds in-stock items
+    only, so absence is meaningful information rather than missing data.
+    """
+    if not store_ids:
+        return 0, None
+    marks = ",".join("?" * len(store_ids))
+    cur = conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT store_id), MAX(scraped_at)
+        FROM observations
+        WHERE run_id LIKE 'index-%' AND store_id IN ({marks})
+        """,
+        [str(s) for s in store_ids],
+    )
+    n, newest = cur.fetchone()
+    if not n:
+        return 0, None
+
+    from datetime import datetime, timezone
+    try:
+        ts = datetime.fromisoformat(newest)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0
+    except (TypeError, ValueError):
+        age = None
+    return n, age
+
+
 def cache_age_hours(rows: list[dict]) -> float | None:
     """Age of the freshest row, in hours."""
     stamps = [r.get("scraped_at") for r in rows if r.get("scraped_at")]

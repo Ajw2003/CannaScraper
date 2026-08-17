@@ -298,6 +298,32 @@ find.bat "grape gas" all                REM every Alberta store
 find.bat "grape gas" all Ontario        REM every Ontario store
 ```
 
+### Three sources, one launcher
+
+`find.bat` asks where the answer should come from, and every run prints which
+one served it (`[source: STOCK INDEX — 0.5h old]`, `[source: LIVE via API]`, …).
+
+| Choice | Source | 5 stores | Use when |
+|---|---|---|---|
+| **Index** (Enter) | nightly stock index | **1 s** | Normal use |
+| **L** — Live | fast API, checked now | 8 s | Stock matters *right now* |
+| **W** — Web | real browser | 22 s | API changed / verifying |
+
+From the command line, add the keyword last:
+
+```bash
+find.bat "grape gas" 5 Calgary index    REM instant
+find.bat "grape gas" 5 Calgary live     REM check now
+find.bat "grape gas" 5 Calgary web      REM browser fallback
+```
+
+Or with `main.py` directly: `--cached`, `--fetcher api --refresh`,
+`--fetcher browser --refresh`.
+
+All three agree — the same query returned Kensington 10, Roxboro 7, East
+Village 6 units by every path, which is a useful cross-check whenever the site
+changes.
+
 ### Fresh vs cached
 
 Interactively, `find.bat` asks — **Enter does a live check**, `C` reuses recent
