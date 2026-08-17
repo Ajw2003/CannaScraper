@@ -59,6 +59,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="skip building/opening the HTML report")
     p.add_argument("--fetcher", default=None, choices=["browser", "api"],
                    help=f"backend to fetch prices with (default {config.FETCHER})")
+    p.add_argument("--compare", action="store_true",
+                   help="run BOTH backends over the same stores and diff them; "
+                        "writes nothing to the database")
     p.add_argument("--csv", default=config.CSV_PATH)
     p.add_argument("--db", default=config.DB_PATH)
     return p.parse_args(argv)
@@ -143,6 +146,9 @@ async def run(args: argparse.Namespace) -> int:
                   f'or "lat,lng".')
             return 2
 
+    if args.compare:
+        return await compare_backends(store_list, targets)
+
     conn = db.connect(args.db)
 
     # --- cached first ------------------------------------------------------
@@ -202,7 +208,9 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"    !! store failed: {type(e).__name__}: {e}")
                 failed_stores.append((st["store_id"], str(e)[:120]))
 
-            if i < len(todo):
+            # Backends that pace themselves (the rate-limited API) must not get
+            # an extra delay stacked on top -- that alone would triple a sweep.
+            if i < len(todo) and not getattr(f, "paces_itself", False):
                 await asyncio.sleep(random.uniform(*config.DELAY_RANGE))
 
     # --- output ------------------------------------------------------------
@@ -234,6 +242,75 @@ async def run(args: argparse.Namespace) -> int:
 
     conn.close()
     return 0 if not failed_stores else 1
+
+
+async def compare_backends(store_list, targets) -> int:
+    """Run both backends over the same stores and diff the answers.
+
+    The API returning another store's numbers, or stale stock, would look
+    completely normal in the output -- this is the only thing that would catch
+    it. Writes nothing to the database.
+    """
+    FIELDS = ["price", "member_price", "api_stock", "carried", "available"]
+
+    print(f"\nComparing backends over {len(store_list)} store(s), "
+          f"{len(targets)} product(s). Nothing will be saved.\n")
+
+    results: dict[str, dict] = {}
+    for backend in ("browser", "api"):
+        print(f"--- {backend} ---")
+        t0 = time.time()
+        async with fetchers.get_fetcher(backend) as f:
+            for i, st in enumerate(store_list, 1):
+                try:
+                    for r in await f.fetch(st, targets, verbose=False):
+                        results.setdefault((r["store_id"], r["sku"]), {})[backend] = r
+                except Exception as e:                      # noqa: BLE001
+                    print(f"    {st['name']}: FAILED {type(e).__name__}: {e}")
+                if i < len(store_list) and not getattr(f, "paces_itself", False):
+                    await asyncio.sleep(random.uniform(*config.DELAY_RANGE))
+        print(f"    {time.time() - t0:.1f}s\n")
+
+    diffs = compared = 0
+    skipped: list[str] = []
+
+    for (sid, sku), got in sorted(results.items()):
+        a, b = got.get("browser"), got.get("api")
+        if not a or not b:
+            skipped.append(f"{sid}/{sku}: only {'browser' if a else 'api'} returned")
+            continue
+
+        # A row that errored holds no data to compare -- counting it as a
+        # disagreement would blame the wrong backend. Report separately.
+        failed = [n for n, r in (("browser", a), ("api", b))
+                  if r.get("status") != "ok"]
+        if failed:
+            skipped.append(f"{a['store_name']} ({sid}) sku {sku}: "
+                           f"{'+'.join(failed)} errored "
+                           f"({(a if 'browser' in failed else b).get('error','')[:48]})")
+            continue
+
+        compared += 1
+        bad = [f for f in FIELDS if (a.get(f) or 0) != (b.get(f) or 0)]
+        if bad:
+            diffs += 1
+            print(f"  {a['store_name']} ({sid}) sku {sku}:")
+            for f in bad:
+                print(f"      {f:<14} browser={a.get(f)!r:<12} api={b.get(f)!r}")
+
+    if skipped:
+        print(f"\n  {len(skipped)} row(s) not comparable (a backend failed):")
+        for s in skipped:
+            print(f"      {s}")
+
+    print("\n" + "=" * 74)
+    if diffs:
+        print(f"{diffs} disagreement(s) across {compared} comparable row(s). "
+              f"Do NOT switch the default until these are understood.")
+    else:
+        print(f"No disagreements across {compared} comparable row(s). "
+              f"The API backend matches the browser exactly.")
+    return 1 if diffs else 0
 
 
 def show_results(rows: list[dict], age: float | None, args, targets,

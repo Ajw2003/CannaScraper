@@ -31,10 +31,39 @@ NOMINATIM_UA = "CannaCabanaScraper/1.0 (personal stock lookup)"
 CACHE_FRESH_H = 12
 
 # --- Fetch backend ---------------------------------------------------------
-# "browser" = drive a real Chromium (proven, no credentials, ~8s/store).
-# "api"     = the site's internal pricing endpoint (fast, needs its embedded
-#             credentials) -- deliberately a stub until that call is made.
-FETCHER = "browser"
+# "browser" = drive a real Chromium (~8s per store per product).
+# "api"     = the site's own pricing endpoint: one call returns the whole
+#             watchlist for a store, so cost scales with STORES only, not
+#             stores x products.
+#
+# Default is "api" only because `--compare` showed zero disagreements with the
+# browser across every field (price, member price, stock, carried, available).
+# The browser backend stays fully working: set this to "browser", or pass
+# --fetcher browser, if the endpoint ever changes shape.
+FETCHER = "api"
+
+# --- API backend -----------------------------------------------------------
+API_BASE = "https://app.cannacabana.com/api"
+API_SCAN = API_BASE + "/product/scan-multiple-items/{store_id}"
+
+# Verified by probe: the endpoint answers unauthenticated. We therefore send
+# NO credentials at all. The site's own page mints a token from a client_id /
+# client_secret in its source, but never attaches it to this call -- so there
+# is no reason for us to touch those credentials.
+# If they ever start requiring auth, flip this on and fill in the token URL.
+API_SEND_AUTH = False
+API_TOKEN_URL = API_BASE + "/oauth/token"
+API_CLIENT_ID = ""        # intentionally blank; see above
+API_CLIENT_SECRET = ""
+
+# Server advertises X-RateLimit-Limit: 60 (per minute) and 429s on short
+# bursts. We pace below that and stay sequential -- at ~0.7s latency the rate
+# limit, not concurrency, is the binding constraint, so parallelism buys
+# nothing and only risks a ban.
+API_RATE_PER_MIN = 50      # deliberate headroom under the advertised 60
+API_CONCURRENCY = 1
+API_MAX_RETRIES = 3
+API_TIMEOUT_S = 30
 
 # --- Browser ---------------------------------------------------------------
 HEADLESS = True

@@ -144,6 +144,43 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
 
+## Two backends
+
+| | Browser | **API** (default) |
+|---|---|---|
+| 10 nearest stores, 1 product | ~85 s | **~10 s** |
+| 92 stores, 1 product | ~18 min | **~2 min** |
+| 92 stores, 5 products | ~60 min | **~3.6 min** |
+
+The API backend calls the same endpoint the site's own page uses, and **one
+call carries the whole watchlist for a store** — so cost scales with the number
+of stores, not stores × products. That's why five products cost barely more
+than one.
+
+**No credentials are used.** The endpoint answers unauthenticated; the site
+mints a token but never attaches it to this call, so neither do we.
+
+It is rate-limited (`X-RateLimit-Limit: 60`/min, and it 429s on short bursts),
+so requests are paced sequentially at 50/min with headroom. Raising
+`config.API_RATE_PER_MIN` will get you 429s, not speed.
+
+Switch back any time with `--fetcher browser` or `config.FETCHER`.
+
+### Trust but verify
+
+```bash
+.venv\Scripts\python main.py --product 203012 --top 8 --compare
+```
+
+Runs **both** backends over the same stores and diffs price, member price,
+stock, carried, and available. Nothing is written to the database. Run this
+after any site change before trusting the fast path — a backend silently
+returning stale or another store's numbers would look completely normal in
+normal output.
+
+Known: store **528 (Gateway Village)** returns HTTP 500 from the API and is
+reported as an error rather than guessed at. Every other Alberta store works.
+
 ## Finding which store has a product in stock
 
 The common case, in two commands. No file editing.
