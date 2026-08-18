@@ -82,6 +82,11 @@ _MIGRATIONS = [
 
 def connect(path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path or config.DB_PATH)
+    # The web server reads while an index build writes. WAL lets those happen
+    # at once, and the busy timeout makes a brief lock wait rather than raise
+    # "database is locked" mid-request.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.executescript(SCHEMA)
     existing = {r[1] for r in conn.execute("PRAGMA table_info(observations)")}
     for name, decl in _MIGRATIONS:

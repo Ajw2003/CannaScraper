@@ -89,13 +89,22 @@ a.src:hover{text-decoration:underline}
          autocomplete="off" autofocus>
 
   <div class="row controls">
+    <select id="prov" title="Province"></select>
     <select id="top">
       <option value="5">5 nearest</option>
       <option value="10" selected>10 nearest</option>
       <option value="25">25 nearest</option>
       <option value="all">Whole province</option>
     </select>
-    <button id="loc" title="Use my location">📍 Near me</button>
+    <select id="src" title="Where the live check gets its data">
+      <option value="api" selected>Live: fast API</option>
+      <option value="browser">Live: real browser</option>
+    </select>
+  </div>
+  <div class="row controls" id="nearrow">
+    <input type="search" id="near" placeholder="Near which city or postal code?"
+           autocomplete="off" style="flex:1;min-width:180px">
+    <button id="loc" title="Use my device location">📍</button>
     <span class="muted" id="locinfo"></span>
   </div>
 
@@ -136,25 +145,57 @@ async function search(q){
 function esc(s){ return (s||'').replace(/[<>&"]/g,
   c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 
+// ---- provinces ------------------------------------------------------------
+(async function provinces(){
+  const d = await (await fetch('/api/provinces')).json();
+  $('#prov').innerHTML = d.provinces.map(p =>
+    `<option value="${esc(p.name)}"${p.name === d.default ? ' selected' : ''}>
+       ${esc(p.name)} (${p.stores})</option>`).join('');
+  if (d.home && typeof d.home === 'string') $('#near').placeholder = d.home;
+})();
+
 // ---- geolocation ----------------------------------------------------------
 $('#loc').onclick = () => {
   if (!navigator.geolocation){ $('#locinfo').textContent = 'not supported'; return; }
   $('#locinfo').textContent = 'locating…';
   navigator.geolocation.getCurrentPosition(
     p => { coords = [p.coords.latitude, p.coords.longitude];
+           $('#near').value = '';                 // device location wins
            $('#locinfo').textContent = 'using your location';
            if (current) load(current); },
-    () => { $('#locinfo').textContent = 'location denied — using default'; });
+    // Browsers only allow geolocation on https or localhost, so over plain
+    // http from a phone this will refuse -- say so instead of failing silently.
+    e => { $('#locinfo').textContent = e.code === 1
+             ? 'blocked — type a city instead' : 'unavailable — type a city'; });
 };
 
-$('#top').onchange = () => { if (current) load(current); };
+// Typing a place overrides the device location.
+$('#near').addEventListener('change', () => {
+  if ($('#near').value.trim()){ coords = null; $('#locinfo').textContent = ''; }
+  if (current) load(current);
+});
+$('#near').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && current) load(current);
+});
+$('#top').onchange = () => { toggleNear(); if (current) load(current); };
+$('#prov').onchange = () => { if (current) load(current); };
+
+function toggleNear(){
+  // "Whole province" ignores location entirely, so hide the location row.
+  $('#nearrow').classList.toggle('hide', $('#top').value === 'all');
+}
+toggleNear();
 
 // ---- results --------------------------------------------------------------
 function params(sku){
   const p = new URLSearchParams({sku});
   const t = $('#top').value;
   if (t === 'all') p.set('all_stores', 'true'); else p.set('top', t);
+  const prov = $('#prov').value;
+  if (prov) p.set('province', prov);
+  const near = $('#near').value.trim();
   if (coords){ p.set('lat', coords[0]); p.set('lng', coords[1]); }
+  else if (near){ p.set('near', near); }
   return p;
 }
 
@@ -207,7 +248,7 @@ function render(d){
     </div>
     <div class="summary">
       <span class="big">${inS}</span> of ${d.checked} stores have it
-      <span class="muted">· checked ${age(d.age_hours)}</span>
+      <span class="muted">· ${esc(d.scope)} · checked ${age(d.age_hours)}</span>
     </div>
     <div class="row" style="margin-bottom:12px">
       <button class="primary" id="refresh">Check live now</button>
@@ -233,9 +274,12 @@ function render(d){
 // ---- live re-check --------------------------------------------------------
 async function refresh(){
   const btn = $('#refresh');
-  btn.disabled = true; btn.textContent = 'Checking…';
+  btn.disabled = true;
+  btn.textContent = $('#src').value === 'browser'
+    ? 'Checking (browser, slow)…' : 'Checking…';
   $('#prog').classList.remove('hide');
-  const r = await fetch('/api/refresh?' + params(current), {method:'POST'});
+  const p = params(current); p.set('fetcher', $('#src').value);
+  const r = await fetch('/api/refresh?' + p, {method:'POST'});
   const {job, total} = await r.json();
 
   const poll = setInterval(async () => {

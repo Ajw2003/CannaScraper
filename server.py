@@ -47,18 +47,32 @@ def _targets(sku: str, cat) -> list[dict]:
     return [v for v in cat if str(v.get("sku")) == str(sku)]
 
 
-def _scope(lat, lng, top, province, all_stores):
-    """The stores this query covers."""
-    store_list = S.get_stores(province=province or config.PROVINCE)
+def _scope(lat=None, lng=None, near=None, top=None, province=None,
+           all_stores=False):
+    """The stores this query covers, plus a human label for them.
+
+    Location can come from the browser (lat/lng), a typed place ("Calgary, AB",
+    a postal code), or config.HOME -- matching what the CLI accepts.
+    """
+    prov = province or config.PROVINCE
+    store_list = S.get_stores(province=prov)
     if all_stores:
-        return store_list, "everywhere in " + (province or config.PROVINCE)
+        return store_list, f"all {len(store_list)} stores in {prov}"
+
+    where = ""
     if lat is None or lng is None:
-        loc = S.resolve_location(None)
+        # A typed place is geocoded server-side (cached in geocode.json).
+        loc = S.resolve_location(near) if near else S.resolve_location(None)
         if not loc:
-            return store_list[: top or config.DEFAULT_TOP], ""
+            return store_list[: top or config.DEFAULT_TOP], f"{prov} (unlocated)"
         lat, lng = loc
-    near = S.nearest(store_list, float(lat), float(lng), top or config.DEFAULT_TOP)
-    return near, f"{len(near)} nearest stores"
+        where = near or str(config.HOME)
+    else:
+        where = "your location"
+
+    found = S.nearest(store_list, float(lat), float(lng),
+                      top or config.DEFAULT_TOP)
+    return found, f"{len(found)} nearest to {where}"
 
 
 def _pack(rows: list[dict], store_list: list[dict]) -> list[dict]:
@@ -100,6 +114,19 @@ def index():
     return FileResponse(HERE / "web" / "index.html")
 
 
+@app.get("/api/provinces")
+def api_provinces():
+    """Provinces with store counts, straight from the registry."""
+    everything = S.get_stores(province="")
+    counts: dict[str, int] = {}
+    for st in everything:
+        if st.get("province"):
+            counts[st["province"]] = counts.get(st["province"], 0) + 1
+    return {"provinces": [{"name": k, "stores": v}
+                          for k, v in sorted(counts.items(), key=lambda kv: -kv[1])],
+            "default": config.PROVINCE, "home": config.HOME}
+
+
 @app.get("/api/search")
 def api_search(q: str = "", limit: int = 24):
     """Product search -- catalogue only, no network calls, instant."""
@@ -121,15 +148,15 @@ def api_search(q: str = "", limit: int = 24):
 
 @app.get("/api/results")
 def api_results(sku: str, lat: float | None = None, lng: float | None = None,
-                top: int = config.DEFAULT_TOP, province: str | None = None,
-                all_stores: bool = False):
+                near: str | None = None, top: int = config.DEFAULT_TOP,
+                province: str | None = None, all_stores: bool = False):
     """Instant answer from the index/cache. No scraping."""
     cat = catalog.get_catalog(verbose=False)
     targets = _targets(sku, cat)
     if not targets:
         return JSONResponse({"error": f"unknown sku {sku}"}, status_code=404)
 
-    store_list, scope = _scope(lat, lng, top, province, all_stores)
+    store_list, scope = _scope(lat, lng, near, top, province, all_stores)
     conn = db.connect()
     try:
         rows = db.latest_observations(conn, [sku], [s["store_id"] for s in store_list])
@@ -151,28 +178,30 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
 
 @app.post("/api/refresh")
 async def api_refresh(sku: str, lat: float | None = None, lng: float | None = None,
-                      top: int = config.DEFAULT_TOP, province: str | None = None,
-                      all_stores: bool = False):
+                      near: str | None = None, top: int = config.DEFAULT_TOP,
+                      province: str | None = None, all_stores: bool = False,
+                      fetcher: str | None = None):
     """Kick off a live re-check. Returns a job id to poll."""
     cat = catalog.get_catalog(verbose=False)
     targets = _targets(sku, cat)
     if not targets:
         return JSONResponse({"error": f"unknown sku {sku}"}, status_code=404)
 
-    store_list, _ = _scope(lat, lng, top, province, all_stores)
+    store_list, _ = _scope(lat, lng, near, top, province, all_stores)
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {"done": 0, "total": len(store_list), "store": "",
                     "finished": False, "error": None, "started": time.time()}
-    asyncio.create_task(_run_refresh(job_id, store_list, targets))
+    asyncio.create_task(_run_refresh(job_id, store_list, targets, fetcher))
     return {"job": job_id, "total": len(store_list)}
 
 
-async def _run_refresh(job_id: str, store_list: list[dict], targets: list[dict]):
+async def _run_refresh(job_id: str, store_list: list[dict],
+                       targets: list[dict], fetcher: str | None = None):
     job = JOBS[job_id]
     run_id = f"web-{job_id}"
     conn = db.connect()
     try:
-        async with fetchers.get_fetcher() as f:
+        async with fetchers.get_fetcher(fetcher) as f:
             for i, st in enumerate(store_list, 1):
                 job["store"] = f"{st['name']}, {st['city']}"
                 try:

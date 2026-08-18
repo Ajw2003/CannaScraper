@@ -163,12 +163,33 @@ Type a product, pick it from the thumbnails, and get every store ranked by
 units on hand. **Check live now** re-queries the stores with a progress bar
 (1–2 s per store) rather than blocking the page.
 
+It has the same reach as `find.bat`:
+
+| Control | Equivalent CLI |
+|---|---|
+| Province dropdown (with store counts) | `--province Ontario` |
+| `5 / 10 / 25 nearest` or `Whole province` | `--top N` / `--all` |
+| City or postal code box | `--near "Lethbridge, AB"` |
+| 📍 button | device geolocation (no CLI equivalent) |
+| `Live: fast API` / `Live: real browser` | `--fetcher api` / `--fetcher browser` |
+| Page loads from the index | `--cached` |
+| **Check live now** | `--refresh` |
+
+Typing a place overrides the 📍 location, and picking *Whole province* hides
+the location row since it no longer applies.
+
 | Route | Does |
 |---|---|
+| `GET /api/provinces` | provinces + store counts, from the registry |
 | `GET /api/search?q=` | catalogue search — instant, no network |
-| `GET /api/results?sku=&lat=&lng=&top=` | index/cache answer — instant |
-| `POST /api/refresh?...` | starts a live re-check, returns a `job` id |
+| `GET /api/results?sku=&lat=&lng=&near=&top=&province=&all_stores=` | index/cache answer — instant |
+| `POST /api/refresh?...&fetcher=` | starts a live re-check, returns a `job` id |
 | `GET /api/job/{id}` | `{done, total, store, finished}` for the progress bar |
+
+> [!NOTE]
+> Browsers only permit geolocation on `https` or `localhost`, so 📍 will be
+> refused when you load the page from a phone over plain `http://<lan-ip>`.
+> The UI says so and falls back to the city box, which works everywhere.
 
 The server adds no scraping logic — it reuses `catalog.search`,
 `stores.nearest`, `db.latest_observations`, and the same fetchers the CLI uses.
