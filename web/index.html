@@ -96,8 +96,9 @@ a.src:hover{text-decoration:underline}
       <option value="25">25 nearest</option>
       <option value="all">Whole province</option>
     </select>
-    <select id="src" title="Where the live check gets its data">
-      <option value="api" selected>Live: fast API</option>
+    <select id="src" title="Where the answer comes from">
+      <option value="index" selected>Index (instant)</option>
+      <option value="api">Live: fast API</option>
       <option value="browser">Live: real browser</option>
     </select>
   </div>
@@ -205,6 +206,7 @@ $('#near').addEventListener('keydown', e => {
 });
 $('#top').onchange = () => { toggleNear(); if (current) load(current); };
 $('#prov').onchange = () => { if (current) load(current); };
+$('#src').onchange  = () => { if (current) load(current); };
 
 function toggleNear(){
   // "Whole province" ignores location entirely, so hide the location row.
@@ -242,6 +244,28 @@ function age(h){
   return (h/24).toFixed(1) + ' days ago';
 }
 
+// Never say "no data" when the stores were in fact checked and simply don't
+// stock the item -- that is an answer, and the commonest case for a full
+// province sweep.
+function status(d){
+  const cov = d.indexed_stores || 0, checked = d.checked || 0;
+  const bits = [];
+
+  if (cov >= checked && checked)
+    bits.push(`<span class="ok pill">indexed</span> all ${checked} stores · ${age(d.index_age_hours)}`);
+  else if (cov)
+    bits.push(`<span class="low pill">partly indexed</span> ${cov} of ${checked} stores · ${age(d.index_age_hours)}`);
+  else
+    bits.push(`<span class="no">not indexed yet — run index_builder, or use a live check</span>`);
+
+  if (d.age_hours !== null && d.age_hours !== undefined)
+    bits.push(`this product last checked ${age(d.age_hours)}`);
+  else if (cov)
+    bits.push(`not stocked at any of them`);
+
+  return `<span class="muted">${bits.join(' · ')}</span>`;
+}
+
 function render(d){
   const p = d.product, inS = d.in_stock;
   const rows = d.results.map(r => {
@@ -274,10 +298,12 @@ function render(d){
     </div>
     <div class="summary">
       <span class="big">${inS}</span> of ${d.checked} stores have it
-      <span class="muted">· ${esc(d.scope)} · checked ${age(d.age_hours)}</span>
+      <span class="muted">· ${esc(d.scope)}</span>
+      <div style="margin-top:5px">${status(d)}</div>
     </div>
     <div class="row" style="margin-bottom:12px">
-      <button class="primary" id="refresh">Check live now</button>
+      <button class="primary" id="refresh">${
+        $('#src').value === 'index' ? 'Reload from index' : 'Check live now'}</button>
       ${hidden ? `<button id="toggle">Show ${hidden} without it</button>` : ''}
     </div>
     <div id="prog" class="hide"><div class="bar"><i></i></div>
@@ -299,6 +325,7 @@ function render(d){
 
 // ---- live re-check --------------------------------------------------------
 async function refresh(){
+  if ($('#src').value === 'index'){ load(current); return; }
   const btn = $('#refresh');
   btn.disabled = true;
   btn.textContent = $('#src').value === 'browser'

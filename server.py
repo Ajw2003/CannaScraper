@@ -170,10 +170,15 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
         return JSONResponse({"error": f"unknown sku {sku}"}, status_code=404)
 
     store_list, scope = _scope(lat, lng, near, top, province, all_stores)
+    store_ids = [s["store_id"] for s in store_list]
     conn = db.connect()
     try:
-        rows = db.latest_observations(conn, [sku], [s["store_id"] for s in store_list])
+        rows = db.latest_observations(conn, [sku], store_ids)
         age = db.cache_age_hours(rows)
+        # The index holds in-stock items only, so zero rows is ambiguous:
+        # either we never looked, or we looked and it isn't stocked. Coverage
+        # tells them apart, and the UI must not report the second as "no data".
+        indexed, index_age = db.index_coverage(conn, store_ids)
         rows = cli.fill_missing_stores(rows, store_list, targets, conn)
     finally:
         conn.close()
@@ -185,7 +190,10 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
                     "size": v["size"], "image": thumb(v.get("image"), 320)},
         "scope": scope, "checked": len(store_list),
         "in_stock": sum(1 for r in packed if r["available"]),
-        "age_hours": age, "results": packed,
+        "age_hours": age,
+        "indexed_stores": indexed,
+        "index_age_hours": index_age,
+        "results": packed,
     }
 
 
