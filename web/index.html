@@ -96,6 +96,10 @@ a.src:hover{text-decoration:underline}
       <option value="25">25 nearest</option>
       <option value="all">Whole province</option>
     </select>
+    <select id="sort" title="How to order the stores">
+      <option value="distance" selected>Closest first</option>
+      <option value="stock">Most stock first</option>
+    </select>
     <select id="src" title="Where the answer comes from">
       <option value="index" selected>Index (instant)</option>
       <option value="api">Live: fast API</option>
@@ -207,6 +211,7 @@ $('#near').addEventListener('keydown', e => {
 $('#top').onchange = () => { toggleNear(); if (current) load(current); };
 $('#prov').onchange = () => { if (current) load(current); };
 $('#src').onchange  = () => { if (current) load(current); };
+$('#sort').onchange = () => { if (current) load(current); };
 
 function toggleNear(){
   // "Whole province" ignores location entirely, so hide the location row.
@@ -219,6 +224,7 @@ function params(sku){
   const p = new URLSearchParams({sku});
   const t = $('#top').value;
   if (t === 'all') p.set('all_stores', 'true'); else p.set('top', t);
+  p.set('sort', $('#sort').value);
   const prov = $('#prov').value;
   if (prov) p.set('province', prov);
   const near = $('#near').value.trim();

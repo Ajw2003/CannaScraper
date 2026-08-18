@@ -75,8 +75,17 @@ def _scope(lat=None, lng=None, near=None, top=None, province=None,
     return found, f"{len(found)} nearest to {where}"
 
 
-def _pack(rows: list[dict], store_list: list[dict]) -> list[dict]:
-    """Shape rows for the browser, cheapest tier first."""
+def _pack(rows: list[dict], store_list: list[dict],
+          sort: str = "distance") -> list[dict]:
+    """Shape rows for the browser.
+
+    Default sort is nearest-first: 13 units 2 km away beats 17 units 15 km
+    away, because the trip is the cost, not the shelf depth. Stock only breaks
+    ties between similarly-close stores. `sort="stock"` restores depth-first
+    for when you want the store least likely to have sold out.
+
+    Out-of-stock rows always sink to the bottom either way.
+    """
     by_id = {s["store_id"]: s for s in store_list}
     out = []
     for r in rows:
@@ -99,11 +108,16 @@ def _pack(rows: list[dict], store_list: list[dict]) -> list[dict]:
             "is_elite": bool(r.get("is_elite")),
             "url": r.get("url"),
         })
-    out.sort(key=lambda r: (
-        not r["available"],
-        -(r["qty"] or 0),
-        r["distance_km"] if r["distance_km"] is not None else 9e9,
-    ))
+    far = 9e9
+    if sort == "stock":
+        out.sort(key=lambda r: (not r["available"], -(r["qty"] or 0),
+                                r["distance_km"] if r["distance_km"] is not None else far))
+    else:
+        # Nearest first. With no location (whole-province, no geocode) every
+        # distance is None, so this quietly degrades to stock-depth order.
+        out.sort(key=lambda r: (not r["available"],
+                                r["distance_km"] if r["distance_km"] is not None else far,
+                                -(r["qty"] or 0)))
     return out
 
 
@@ -162,7 +176,8 @@ def api_search(q: str = "", limit: int = 50, offset: int = 0):
 @app.get("/api/results")
 def api_results(sku: str, lat: float | None = None, lng: float | None = None,
                 near: str | None = None, top: int = config.DEFAULT_TOP,
-                province: str | None = None, all_stores: bool = False):
+                province: str | None = None, all_stores: bool = False,
+                sort: str = "distance"):
     """Instant answer from the index/cache. No scraping."""
     cat = catalog.get_catalog(verbose=False)
     targets = _targets(sku, cat)
@@ -184,7 +199,7 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
         conn.close()
 
     v = targets[0]
-    packed = _pack(rows, store_list)
+    packed = _pack(rows, store_list, sort)
     return {
         "product": {"sku": sku, "title": v["title"], "brand": v["brand"],
                     "size": v["size"], "image": thumb(v.get("image"), 320)},
