@@ -208,16 +208,13 @@ $('#near').addEventListener('change', () => {
 $('#near').addEventListener('keydown', e => {
   if (e.key === 'Enter' && current) load(current);
 });
-$('#top').onchange = () => { toggleNear(); if (current) load(current); };
+$('#top').onchange = () => { if (current) load(current); };
 $('#prov').onchange = () => { if (current) load(current); };
 $('#src').onchange  = () => { if (current) load(current); };
 $('#sort').onchange = () => { if (current) load(current); };
 
-function toggleNear(){
-  // "Whole province" ignores location entirely, so hide the location row.
-  $('#nearrow').classList.toggle('hide', $('#top').value === 'all');
-}
-toggleNear();
+// Location applies to every scope now: "Whole province" simply drops the
+// count limit, it still ranks by distance. So the location row always shows.
 
 // ---- results --------------------------------------------------------------
 function params(sku){

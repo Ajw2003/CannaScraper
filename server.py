@@ -56,23 +56,28 @@ def _scope(lat=None, lng=None, near=None, top=None, province=None,
     """
     prov = province or config.PROVINCE
     store_list = S.get_stores(province=prov)
-    if all_stores:
-        return store_list, f"all {len(store_list)} stores in {prov}"
 
-    where = ""
-    if lat is None or lng is None:
-        # A typed place is geocoded server-side (cached in geocode.json).
-        loc = S.resolve_location(near) if near else S.resolve_location(None)
-        if not loc:
-            return store_list[: top or config.DEFAULT_TOP], f"{prov} (unlocated)"
-        lat, lng = loc
-        where = near or str(config.HOME)
+    # Resolve location FIRST, independently of scope. "Whole province" only
+    # removes the count limit -- it must not throw away where you are, or the
+    # closest-first sort silently stops working on exactly the search where
+    # ranking matters most.
+    if lat is not None and lng is not None:
+        loc, where = (float(lat), float(lng)), "your location"
     else:
-        where = "your location"
+        loc = S.resolve_location(near) if near else S.resolve_location(None)
+        where = near or str(config.HOME)
 
-    found = S.nearest(store_list, float(lat), float(lng),
-                      top or config.DEFAULT_TOP)
-    return found, f"{len(found)} nearest to {where}"
+    if not loc:
+        if all_stores:
+            return store_list, f"all {len(store_list)} stores in {prov}"
+        return store_list[: top or config.DEFAULT_TOP], f"{prov} (unlocated)"
+
+    # nearest() with no limit = every store, still carrying distance_km.
+    limit = None if all_stores else (top or config.DEFAULT_TOP)
+    found = S.nearest(store_list, loc[0], loc[1], limit)
+    label = (f"all {len(found)} stores in {prov}, nearest first"
+             if all_stores else f"{len(found)} nearest")
+    return found, f"{label} to {where}"
 
 
 def _pack(rows: list[dict], store_list: list[dict],
