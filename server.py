@@ -47,6 +47,27 @@ def _targets(sku: str, cat) -> list[dict]:
     return [v for v in cat if str(v.get("sku")) == str(sku)]
 
 
+# Which SKUs a province has in stock. ~250ms to compute over 90k rows, and
+# search runs on every debounced keystroke, so cache it briefly. It only
+# changes when an index or live check writes.
+_AVAIL: dict[str, tuple[float, set]] = {}
+_AVAIL_TTL = 120.0
+
+
+def available_skus(province: str) -> set[str]:
+    hit = _AVAIL.get(province)
+    if hit and time.time() - hit[0] < _AVAIL_TTL:
+        return hit[1]
+    ids = [s["store_id"] for s in S.get_stores(province=province)]
+    conn = db.connect()
+    try:
+        skus = db.available_skus(conn, ids)
+    finally:
+        conn.close()
+    _AVAIL[province] = (time.time(), skus)
+    return skus
+
+
 def _scope(lat=None, lng=None, near=None, top=None, province=None,
            all_stores=False):
     """The stores this query covers, plus a human label for them.
@@ -147,15 +168,22 @@ def api_provinces():
 
 
 @app.get("/api/search")
-def api_search(q: str = "", limit: int = 50, offset: int = 0):
+def api_search(q: str = "", limit: int = 50, offset: int = 0,
+               province: str | None = None, stocked_only: bool = True):
     """Product search -- catalogue only, no network calls, instant.
 
     Returns the total so the UI can page rather than silently truncating:
     "vape" matches over a thousand products, and showing 24 of them with no
     indication looks like the search is broken.
+
+    `stocked_only` hides products the whole province is out of. Most of the
+    catalogue is not stocked in any given province, so unfiltered results are
+    mostly things you cannot buy. `hidden` is always returned so the UI can
+    say what was filtered rather than quietly dropping it.
     """
     if not q.strip():
-        return {"products": [], "total": 0, "offset": 0}
+        return {"products": [], "total": 0, "offset": 0, "hidden": 0,
+                "filtered": False}
 
     # Dedupe by SKU first, then page -- otherwise the total is wrong and
     # paging skips items.
@@ -166,13 +194,29 @@ def api_search(q: str = "", limit: int = 50, offset: int = 0):
         seen.add(v["sku"])
         uniq.append(v)
 
+    prov = province or config.PROVINCE
+    avail = available_skus(prov)
+    # With no index for this province we know nothing, so filtering would hide
+    # everything. Fall back to showing all and say the filter is inactive.
+    can_filter = bool(avail)
+    hidden = 0
+    if stocked_only and can_filter:
+        before = len(uniq)
+        uniq = [v for v in uniq if v["sku"] in avail]
+        hidden = before - len(uniq)
+
     page = uniq[offset: offset + limit]
     return {
         "total": len(uniq),
         "offset": offset,
+        "hidden": hidden,
+        "filtered": bool(stocked_only and can_filter),
+        "can_filter": can_filter,
+        "province": prov,
         "products": [{
             "sku": v["sku"], "title": v["title"], "brand": v["brand"],
             "size": v["size"], "category": v["category"],
+            "in_stock": v["sku"] in avail,
             "image": thumb(v.get("image"), 160),
         } for v in page],
     }

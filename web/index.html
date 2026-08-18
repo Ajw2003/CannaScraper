@@ -34,6 +34,12 @@ button:disabled{opacity:.5;cursor:default}
 .controls{margin:10px 0 18px;gap:8px}
 .controls select{width:auto;flex:1;min-width:120px}
 .muted{color:var(--mut);font-size:13px}
+.chk{display:inline-flex;align-items:center;gap:8px;font-size:13px;
+  color:var(--mut);cursor:pointer;margin:-8px 0 16px;user-select:none}
+.chk input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.chk:hover{color:var(--fg)}
+.sold{color:var(--none);font-size:11px;text-transform:uppercase;
+  letter-spacing:.04em;margin-left:6px}
 
 /* product picker */
 .plist{display:grid;gap:8px;margin-top:14px}
@@ -112,6 +118,8 @@ a.src:hover{text-decoration:underline}
     <button id="loc" title="Use my device location">📍</button>
     <span class="muted" id="locinfo"></span>
   </div>
+  <label class="chk"><input type="checkbox" id="stocked" checked>
+    <span>Only products in stock somewhere in this province</span></label>
 
   <div id="plist" class="plist"></div>
   <div id="more"></div>
@@ -138,7 +146,7 @@ function card(p){
   return `<button class="p" data-sku="${p.sku}">
       ${p.image ? `<img src="${p.image}" alt="" loading="lazy">`
                 : '<div class="p-img"></div>'}
-      <div><div class="t">${esc(p.title)}</div>
+      <div><div class="t">${esc(p.title)}${p.in_stock === false ? '<span class="sold">none in province</span>' : ''}</div>
       <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}</div></div>
     </button>`;
 }
@@ -149,11 +157,16 @@ function wireCards(){
 }
 
 async function search(q, offset = 0){
-  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${PAGE}&offset=${offset}`);
+  const sp = new URLSearchParams({q, limit: PAGE, offset,
+    province: $('#prov').value, stocked_only: $('#stocked').checked});
+  const r = await fetch('/api/search?' + sp);
   const d = await r.json();
 
   if (!d.total){
-    $('#plist').innerHTML = '<div class="muted">Nothing matched that.</div>';
+    $('#plist').innerHTML = `<div class="muted">${d.hidden
+      ? `No matches in stock in ${esc(d.province)} — ${d.hidden} matched but are
+         out everywhere. Untick the filter to see them.`
+      : 'Nothing matched that.'}</div>`;
     $('#more').innerHTML = ''; return;
   }
 
@@ -164,11 +177,13 @@ async function search(q, offset = 0){
 
   // Say how many matched, and offer the rest -- never truncate in silence.
   const shown = offset + d.products.length;
+  const note = d.hidden
+    ? ` · ${d.hidden} hidden (not stocked in ${esc(d.province)})` : '';
   $('#more').innerHTML = shown < d.total
-    ? `<div class="muted" style="margin:10px 0 4px">Showing ${shown} of ${d.total} matches</div>
+    ? `<div class="muted" style="margin:10px 0 4px">Showing ${shown} of ${d.total}${note}</div>
        <button id="moreb">Show ${Math.min(PAGE, d.total - shown)} more</button>`
-    : (d.total > PAGE
-        ? `<div class="muted" style="margin:10px 0">All ${d.total} matches shown</div>` : '');
+    : ((d.total > PAGE || d.hidden)
+        ? `<div class="muted" style="margin:10px 0">All ${d.total} shown${note}</div>` : '');
   const mb = $('#moreb');
   if (mb) mb.onclick = () => { mb.disabled = true; search(q, shown); };
 }
@@ -209,7 +224,12 @@ $('#near').addEventListener('keydown', e => {
   if (e.key === 'Enter' && current) load(current);
 });
 $('#top').onchange = () => { if (current) load(current); };
-$('#prov').onchange = () => { if (current) load(current); };
+$('#prov').onchange = () => { rerun(); if (current) load(current); };
+$('#stocked').onchange = () => rerun();
+function rerun(){
+  const q = $('#q').value.trim();
+  if (q.length >= 2) search(q);
+}
 $('#src').onchange  = () => { if (current) load(current); };
 $('#sort').onchange = () => { if (current) load(current); };
 

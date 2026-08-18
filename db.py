@@ -279,6 +279,35 @@ def indexed_store_ids(conn: sqlite3.Connection,
     return {r[0] for r in conn.execute(sql, params)}
 
 
+def available_skus(conn: sqlite3.Connection, store_ids: list[str]) -> set[str]:
+    """Every SKU in stock at at least one of these stores, freshest data only.
+
+    Used to hide products from search that the whole province is out of. Takes
+    the newest row per (sku, store) first, so a sold-out item cannot look
+    available on the strength of a stale observation.
+    """
+    if not store_ids:
+        return set()
+    marks = ",".join("?" * len(store_ids))
+    ids = [str(s) for s in store_ids]
+    cur = conn.execute(
+        f"""
+        SELECT DISTINCT o.sku
+        FROM observations o
+        JOIN (
+            SELECT sku, store_id, MAX(scraped_at) AS newest
+            FROM observations
+            WHERE store_id IN ({marks}) AND status = 'ok'
+            GROUP BY sku, store_id
+        ) m ON o.sku = m.sku AND o.store_id = m.store_id
+           AND o.scraped_at = m.newest
+        WHERE o.store_id IN ({marks}) AND o.available = 1
+        """,
+        ids + ids,
+    )
+    return {r[0] for r in cur.fetchall()}
+
+
 def cache_age_hours(rows: list[dict]) -> float | None:
     """Age of the freshest row, in hours."""
     stamps = [r.get("scraped_at") for r in rows if r.get("scraped_at")]
