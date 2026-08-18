@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS observations (
   api_price       REAL,    -- authoritative retail price
   api_elite_price REAL,    -- ELITE price, never rendered in the DOM
   is_elite        INTEGER, -- 1 = ELITE-tier product (member price N/A)
+  image           TEXT,    -- Shopify CDN url; resize with ?width=N
   api_equiv_g     REAL,    -- gram equivalence toward the 30 g limit
   api_raw         TEXT,    -- full positional CSV, for fields not yet decoded
   status        TEXT,
@@ -59,7 +60,7 @@ COLUMNS = [
     "price", "member_price", "default_price", "available", "carried",
     "stock_text", "thc", "cbd", "store_label", "api_store_id",
     "store_id_match", "api_stock", "api_member_price", "api_price", "api_elite_price",
-    "api_equiv_g", "api_raw", "is_elite", "status", "error",
+    "api_equiv_g", "api_raw", "is_elite", "image", "status", "error",
 ]
 
 # Columns added after the first schema shipped. CREATE TABLE IF NOT EXISTS will
@@ -75,6 +76,7 @@ _MIGRATIONS = [
     ("api_equiv_g", "REAL"),
     ("api_raw", "TEXT"),
     ("is_elite", "INTEGER"),
+    ("image", "TEXT"),
 ]
 
 

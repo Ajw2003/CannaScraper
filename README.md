@@ -144,6 +144,52 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
 
+## Web UI
+
+```bash
+.venv\Scripts\python server.py
+```
+
+```
+  This computer :  http://localhost:8000
+  Phone / LAN   :  http://192.168.x.x:8000
+```
+
+It binds to `0.0.0.0`, so **your phone on the same Wi-Fi can use it** — no
+hosting, no account, no cost. On mobile the "📍 Near me" button uses the
+browser's own geolocation, so there's no geocoding step at all.
+
+Type a product, pick it from the thumbnails, and get every store ranked by
+units on hand. **Check live now** re-queries the stores with a progress bar
+(1–2 s per store) rather than blocking the page.
+
+| Route | Does |
+|---|---|
+| `GET /api/search?q=` | catalogue search — instant, no network |
+| `GET /api/results?sku=&lat=&lng=&top=` | index/cache answer — instant |
+| `POST /api/refresh?...` | starts a live re-check, returns a `job` id |
+| `GET /api/job/{id}` | `{done, total, store, finished}` for the progress bar |
+
+The server adds no scraping logic — it reuses `catalog.search`,
+`stores.nearest`, `db.latest_observations`, and the same fetchers the CLI uses.
+
+### Product images
+
+Images come from **Shopify's CDN, referenced directly** — never downloaded or
+re-hosted. Two reasons it's free:
+
+- The index's `search` response already includes image URLs, so capturing them
+  costs no extra requests.
+- Shopify resizes on demand: `?width=200` returns **36 KB** where the original
+  is **811 KB** — a 22× saving that matters for a grid of results.
+
+`config`-free helper `server.thumb(url, w)` appends the width parameter.
+
+> [!NOTE]
+> Hotlinking their CDN is exactly what a browser does when viewing the site, and
+> is fine for personal use. If this ever ships commercially, image hosting and
+> rights are worth settling alongside the data question.
+
 ## The stock index
 
 ```bash

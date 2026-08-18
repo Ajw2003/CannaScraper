@@ -36,6 +36,8 @@ def fetch_catalog(verbose: bool = True) -> list[dict]:
         if not products:
             break
         for p in products:
+            imgs = p.get("images") or []
+            img = (imgs[0] or {}).get("src", "") if imgs else ""
             for v in p.get("variants", []):
                 rows.append({
                     "product_id": p.get("id"),
@@ -51,6 +53,7 @@ def fetch_catalog(verbose: bool = True) -> list[dict]:
                     "default_price": v.get("price"),
                     "default_compare_at": v.get("compare_at_price"),
                     "default_available": v.get("available"),
+                    "image": (v.get("featured_image") or {}).get("src") or img,
                 })
         if verbose:
             print(f"  page {page:>2}: {len(products):>3} products  (variants so far: {len(rows)})")

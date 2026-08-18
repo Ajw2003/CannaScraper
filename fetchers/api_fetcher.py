@@ -199,6 +199,7 @@ class ApiFetcher:
             "api_equiv_g": None,
             "api_raw": "",
             "is_elite": None,
+            "image": v.get("image", ""),
             "status": "ok",
             "error": "",
         }

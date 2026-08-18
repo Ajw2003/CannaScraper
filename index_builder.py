@@ -94,6 +94,9 @@ def _get(pacer: _Pacer, term: str, store_id: str, page: int,
 
 def _row(store: dict, prod: dict, var: dict, now: str) -> dict:
     p = var.get("pricing") or {}
+    # The search response already carries CDN urls -- no extra request.
+    imgs = prod.get("images") or []
+    image = imgs[0] if imgs else ""
     qty = p.get("qty_available")
     # A handful of accessories carry stock but no price in their system.
     # Recording that as "$0.00" would read as free; None means "unknown".
@@ -133,6 +136,7 @@ def _row(store: dict, prod: dict, var: dict, now: str) -> dict:
         # Tiers are mutually exclusive: is_elite products carry an ELITE
         # price and no member price, and vice versa.
         "is_elite": 1 if p.get("is_elite") else 0,
+        "image": image,
         "api_equiv_g": p.get("equivalent_g"),
         # p["storeId"] is their internal id (e.g. 622 for our 3412); keep it
         # for cross-referencing without confusing it with our registry id.
