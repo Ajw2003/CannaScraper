@@ -38,6 +38,9 @@ button:disabled{opacity:.5;cursor:default}
   color:var(--mut);cursor:pointer;margin:-8px 0 16px;user-select:none}
 .chk input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
 .chk:hover{color:var(--fg)}
+.pot{display:inline-block;font-size:11.5px;color:var(--mut);
+  border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:6px;
+  white-space:nowrap}
 .sold{color:var(--none);font-size:11px;text-transform:uppercase;
   letter-spacing:.04em;margin-left:6px}
 
@@ -96,6 +99,7 @@ a.src:hover{text-decoration:underline}
 
   <div class="row controls">
     <select id="prov" title="Province"></select>
+    <select id="cat" title="Category"><option value="">All categories</option></select>
     <select id="top">
       <option value="5">5 nearest</option>
       <option value="10" selected>10 nearest</option>
@@ -147,7 +151,9 @@ function card(p){
       ${p.image ? `<img src="${p.image}" alt="" loading="lazy">`
                 : '<div class="p-img"></div>'}
       <div><div class="t">${esc(p.title)}${p.in_stock === false ? '<span class="sold">none in province</span>' : ''}</div>
-      <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}</div></div>
+      <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}${
+        p.thc ? `<span class="pot">THC ${esc(p.thc)}</span>` : ''}${
+        p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}</div></div>
     </button>`;
 }
 
@@ -158,7 +164,8 @@ function wireCards(){
 
 async function search(q, offset = 0){
   const sp = new URLSearchParams({q, limit: PAGE, offset,
-    province: $('#prov').value, stocked_only: $('#stocked').checked});
+    province: $('#prov').value, stocked_only: $('#stocked').checked,
+    category: $('#cat').value});
   const r = await fetch('/api/search?' + sp);
   const d = await r.json();
 
@@ -198,7 +205,21 @@ function esc(s){ return (s||'').replace(/[<>&"]/g,
     `<option value="${esc(p.name)}"${p.name === d.default ? ' selected' : ''}>
        ${esc(p.name)} (${p.stores})</option>`).join('');
   if (d.home && typeof d.home === 'string') $('#near').placeholder = d.home;
+  loadCats();
 })();
+
+// ---- categories -----------------------------------------------------------
+async function loadCats(){
+  const keep = $('#cat').value;
+  const sp = new URLSearchParams({province: $('#prov').value,
+                                  stocked_only: $('#stocked').checked});
+  const d = await (await fetch('/api/categories?' + sp)).json();
+  $('#cat').innerHTML = '<option value="">All categories</option>' +
+    d.categories.map(c =>
+      `<option value="${esc(c.name)}"${c.name === keep ? ' selected' : ''}>
+         ${esc(c.name)} (${c.skus})</option>`).join('');
+}
+$('#cat').onchange = () => rerun();
 
 // ---- geolocation ----------------------------------------------------------
 $('#loc').onclick = () => {
@@ -224,8 +245,8 @@ $('#near').addEventListener('keydown', e => {
   if (e.key === 'Enter' && current) load(current);
 });
 $('#top').onchange = () => { if (current) load(current); };
-$('#prov').onchange = () => { rerun(); if (current) load(current); };
-$('#stocked').onchange = () => rerun();
+$('#prov').onchange = () => { loadCats(); rerun(); if (current) load(current); };
+$('#stocked').onchange = () => { loadCats(); rerun(); };
 function rerun(){
   const q = $('#q').value.trim();
   if (q.length >= 2) search(q);
@@ -317,7 +338,9 @@ function render(d){
       ${p.image ? `<img src="${p.image}" alt="">` : ''}
       <div><h2>${esc(p.title)}${d.results.some(r=>r.is_elite)
           ? '<span class="elite">Elite only</span>' : ''}</h2>
-        <div class="muted">${esc(p.brand)} · ${esc(p.size)} · SKU ${esc(p.sku)}</div></div>
+        <div class="muted">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category || '')} · SKU ${esc(p.sku)}${
+          p.thc ? `<span class="pot">THC ${esc(p.thc)}</span>` : ''}${
+          p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}</div></div>
     </div>
     <div class="summary">
       <span class="big">${inS}</span> of ${d.checked} stores have it

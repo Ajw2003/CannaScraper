@@ -47,25 +47,48 @@ def _targets(sku: str, cat) -> list[dict]:
     return [v for v in cat if str(v.get("sku")) == str(sku)]
 
 
-# Which SKUs a province has in stock. ~250ms to compute over 90k rows, and
-# search runs on every debounced keystroke, so cache it briefly. It only
-# changes when an index or live check writes.
-_AVAIL: dict[str, tuple[float, set]] = {}
-_AVAIL_TTL = 120.0
+# Per-SKU facts for a province: in stock anywhere, category, THC/CBD. Costs a
+# ~250ms scan over 90k rows, and search runs on every debounced keystroke, so
+# cache it briefly. It only changes when an index or live check writes.
+_FACTS: dict[str, tuple[float, dict]] = {}
+_FACTS_TTL = 120.0
 
 
-def available_skus(province: str) -> set[str]:
-    hit = _AVAIL.get(province)
-    if hit and time.time() - hit[0] < _AVAIL_TTL:
+def province_facts(province: str) -> dict[str, dict]:
+    hit = _FACTS.get(province)
+    if hit and time.time() - hit[0] < _FACTS_TTL:
         return hit[1]
     ids = [s["store_id"] for s in S.get_stores(province=province)]
     conn = db.connect()
     try:
-        skus = db.available_skus(conn, ids)
+        facts = db.province_facts(conn, ids)
     finally:
         conn.close()
-    _AVAIL[province] = (time.time(), skus)
-    return skus
+    _FACTS[province] = (time.time(), facts)
+    return facts
+
+
+# THC/CBD arrive as a bare number whose unit depends on the product: a
+# percentage for flower/vape/concentrate, milligrams for edibles. Values above
+# 100 are always mg, because a percentage cannot exceed 100 -- that is what
+# catches infused pre-rolls listed at e.g. 615.
+_MG_CATEGORIES = {
+    "edibles", "gummies", "beverages", "chocolates", "oils & capsules",
+    "capsules", "oils", "topicals", "soft chews", "mints", "baked goods",
+}
+
+
+def potency(value, category: str) -> str:
+    """Format THC/CBD with the unit its magnitude and category imply."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if (category or "").strip().lower() in _MG_CATEGORIES or n > 100:
+        return f"{n:g} mg"
+    return f"{n:g}%"
 
 
 def _scope(lat=None, lng=None, near=None, top=None, province=None,
@@ -169,7 +192,8 @@ def api_provinces():
 
 @app.get("/api/search")
 def api_search(q: str = "", limit: int = 50, offset: int = 0,
-               province: str | None = None, stocked_only: bool = True):
+               province: str | None = None, stocked_only: bool = True,
+               category: str | None = None):
     """Product search -- catalogue only, no network calls, instant.
 
     Returns the total so the UI can page rather than silently truncating:
@@ -195,14 +219,21 @@ def api_search(q: str = "", limit: int = 50, offset: int = 0,
         uniq.append(v)
 
     prov = province or config.PROVINCE
-    avail = available_skus(prov)
+    facts = province_facts(prov)
     # With no index for this province we know nothing, so filtering would hide
     # everything. Fall back to showing all and say the filter is inactive.
-    can_filter = bool(avail)
+    can_filter = bool(facts)
     hidden = 0
+
+    if category:
+        want = category.strip().lower()
+        uniq = [v for v in uniq
+                if (facts.get(v["sku"], {}).get("category")
+                    or v.get("category", "")).lower() == want]
+
     if stocked_only and can_filter:
         before = len(uniq)
-        uniq = [v for v in uniq if v["sku"] in avail]
+        uniq = [v for v in uniq if facts.get(v["sku"], {}).get("available")]
         hidden = before - len(uniq)
 
     page = uniq[offset: offset + limit]
@@ -215,11 +246,32 @@ def api_search(q: str = "", limit: int = 50, offset: int = 0,
         "province": prov,
         "products": [{
             "sku": v["sku"], "title": v["title"], "brand": v["brand"],
-            "size": v["size"], "category": v["category"],
-            "in_stock": v["sku"] in avail,
+            "size": v["size"],
+            "category": facts.get(v["sku"], {}).get("category") or v["category"],
+            "in_stock": bool(facts.get(v["sku"], {}).get("available")),
+            "thc": potency(facts.get(v["sku"], {}).get("thc"),
+                           facts.get(v["sku"], {}).get("category", "")),
+            "cbd": potency(facts.get(v["sku"], {}).get("cbd"),
+                           facts.get(v["sku"], {}).get("category", "")),
             "image": thumb(v.get("image"), 160),
         } for v in page],
     }
+
+
+@app.get("/api/categories")
+def api_categories(province: str | None = None, stocked_only: bool = True):
+    """Categories present in this province's index, biggest first."""
+    facts = province_facts(province or config.PROVINCE)
+    counts: dict[str, int] = {}
+    for f in facts.values():
+        if stocked_only and not f["available"]:
+            continue
+        cat = (f.get("category") or "").strip()
+        if cat:
+            counts[cat] = counts.get(cat, 0) + 1
+    return {"categories": [{"name": k, "skus": v}
+                           for k, v in sorted(counts.items(),
+                                              key=lambda kv: -kv[1])]}
 
 
 @app.get("/api/results")
@@ -251,7 +303,15 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
     packed = _pack(rows, store_list, sort)
     return {
         "product": {"sku": sku, "title": v["title"], "brand": v["brand"],
-                    "size": v["size"], "image": thumb(v.get("image"), 320)},
+                    "size": v["size"], "image": thumb(v.get("image"), 320),
+                    "category": next((r.get("category") for r in rows
+                                      if r.get("category")), v.get("category", "")),
+                    "thc": potency(next((r.get("thc") for r in rows if r.get("thc")), ""),
+                                   next((r.get("category") for r in rows
+                                         if r.get("category")), "")),
+                    "cbd": potency(next((r.get("cbd") for r in rows if r.get("cbd")), ""),
+                                   next((r.get("category") for r in rows
+                                         if r.get("category")), ""))},
         "scope": scope, "checked": len(store_list),
         "in_stock": sum(1 for r in packed if r["available"]),
         "age_hours": age,

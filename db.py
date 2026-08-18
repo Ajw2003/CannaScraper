@@ -279,6 +279,46 @@ def indexed_store_ids(conn: sqlite3.Connection,
     return {r[0] for r in conn.execute(sql, params)}
 
 
+def province_facts(conn: sqlite3.Connection,
+                   store_ids: list[str]) -> dict[str, dict]:
+    """Per-SKU facts for a province, from the freshest row at each store.
+
+    One pass gives everything the search UI needs -- whether anything is in
+    stock, the category, and THC/CBD -- instead of three separate scans of a
+    90k-row table.
+
+    THC/CBD are product-level, so MAX() just picks a non-null value rather
+    than aggregating anything meaningful.
+    """
+    if not store_ids:
+        return {}
+    marks = ",".join("?" * len(store_ids))
+    ids = [str(s) for s in store_ids]
+    cur = conn.execute(
+        f"""
+        SELECT o.sku,
+               MAX(COALESCE(o.available, 0)),
+               MAX(o.category),
+               MAX(o.thc),
+               MAX(o.cbd)
+        FROM observations o
+        JOIN (
+            SELECT sku, store_id, MAX(scraped_at) AS newest
+            FROM observations
+            WHERE store_id IN ({marks}) AND status = 'ok'
+            GROUP BY sku, store_id
+        ) m ON o.sku = m.sku AND o.store_id = m.store_id
+           AND o.scraped_at = m.newest
+        WHERE o.store_id IN ({marks})
+        GROUP BY o.sku
+        """,
+        ids + ids,
+    )
+    return {r[0]: {"available": bool(r[1]), "category": r[2] or "",
+                   "thc": r[3] or "", "cbd": r[4] or ""}
+            for r in cur.fetchall()}
+
+
 def available_skus(conn: sqlite3.Connection, store_ids: list[str]) -> set[str]:
     """Every SKU in stock at at least one of these stores, freshest data only.
 
