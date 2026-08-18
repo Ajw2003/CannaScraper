@@ -128,22 +128,35 @@ def api_provinces():
 
 
 @app.get("/api/search")
-def api_search(q: str = "", limit: int = 24):
-    """Product search -- catalogue only, no network calls, instant."""
+def api_search(q: str = "", limit: int = 50, offset: int = 0):
+    """Product search -- catalogue only, no network calls, instant.
+
+    Returns the total so the UI can page rather than silently truncating:
+    "vape" matches over a thousand products, and showing 24 of them with no
+    indication looks like the search is broken.
+    """
     if not q.strip():
-        return {"products": []}
-    hits = catalog.search(q, limit=limit)
-    seen, out = set(), []
-    for v in hits:
+        return {"products": [], "total": 0, "offset": 0}
+
+    # Dedupe by SKU first, then page -- otherwise the total is wrong and
+    # paging skips items.
+    seen, uniq = set(), []
+    for v in catalog.search(q, limit=None):
         if v["sku"] in seen:
             continue
         seen.add(v["sku"])
-        out.append({
+        uniq.append(v)
+
+    page = uniq[offset: offset + limit]
+    return {
+        "total": len(uniq),
+        "offset": offset,
+        "products": [{
             "sku": v["sku"], "title": v["title"], "brand": v["brand"],
             "size": v["size"], "category": v["category"],
             "image": thumb(v.get("image"), 160),
-        })
-    return {"products": out}
+        } for v in page],
+    }
 
 
 @app.get("/api/results")

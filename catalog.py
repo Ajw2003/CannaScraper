@@ -100,20 +100,46 @@ def _read_watchlist() -> list[str]:
 
 
 def search(terms: str, catalog: list[dict] | None = None,
-           limit: int = 40) -> list[dict]:
-    """Find catalog variants whose title/brand matches every word in `terms`.
+           limit: int | None = 40) -> list[dict]:
+    """Variants matching every word in `terms`, best match first.
 
-    Use this to look up a SKU before scraping: `python catalog.py --find "og kush"`.
+    Ranked rather than alphabetical: a search for "grape gas" should lead with
+    "Pufferz Grape Gas", not with whichever matching brand sorts first. Words
+    may match the title, brand, category or size, but title matches rank above
+    the rest.
+
+    `limit=None` returns everything -- callers that page results need the full
+    set to count it.
     """
     catalog = catalog if catalog is not None else get_catalog(verbose=False)
-    words = [w for w in terms.lower().split() if w]
-    hits = []
+    q = terms.lower().strip()
+    words = [w for w in q.split() if w]
+    if not words:
+        return []
+
+    scored = []
     for v in catalog:
-        hay = f"{v['title']} {v['brand']} {v['category']} {v['size']}".lower()
-        if all(w in hay for w in words):
-            hits.append(v)
-    hits.sort(key=lambda v: (v["brand"], v["title"], v["size"]))
-    return hits[:limit]
+        title = (v.get("title") or "").lower()
+        hay = f"{title} {v.get('brand','')} {v.get('category','')} {v.get('size','')}".lower()
+        if not all(w in hay for w in words):
+            continue
+
+        if title == q:
+            rank = 0                                  # exact title
+        elif title.startswith(q):
+            rank = 1                                  # title begins with it
+        elif q in title:
+            rank = 2                                  # phrase inside the title
+        elif all(w in title for w in words):
+            rank = 3                                  # all words in the title
+        else:
+            rank = 4                                  # matched via brand/category
+        # Shorter titles are usually the more specific product.
+        scored.append((rank, len(title), v.get("brand", ""), title, v))
+
+    scored.sort(key=lambda t: t[:4])
+    hits = [t[4] for t in scored]
+    return hits[:limit] if limit else hits
 
 
 def resolve_terms(terms: list[str], catalog: list[dict] | None = None,

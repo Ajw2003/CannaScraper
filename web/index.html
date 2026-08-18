@@ -109,6 +109,7 @@ a.src:hover{text-decoration:underline}
   </div>
 
   <div id="plist" class="plist"></div>
+  <div id="more"></div>
   <div id="out"></div>
 </div>
 
@@ -122,24 +123,49 @@ function money(v){ return (v || v === 0) ? '$' + Number(v).toFixed(2) : '—'; }
 $('#q').addEventListener('input', e => {
   clearTimeout(timer);
   const q = e.target.value.trim();
-  if (q.length < 2) { $('#plist').innerHTML = ''; return; }
+  if (q.length < 2) { $('#plist').innerHTML = ''; $('#more').innerHTML = ''; return; }
   timer = setTimeout(() => search(q), 180);
 });
 
-async function search(q){
-  const r = await fetch('/api/search?q=' + encodeURIComponent(q));
-  const d = await r.json();
-  if (!d.products.length){ $('#plist').innerHTML =
-    '<div class="muted">Nothing matched that.</div>'; return; }
-  $('#plist').innerHTML = d.products.map(p => `
-    <button class="p" data-sku="${p.sku}">
+const PAGE = 50;
+
+function card(p){
+  return `<button class="p" data-sku="${p.sku}">
       ${p.image ? `<img src="${p.image}" alt="" loading="lazy">`
                 : '<div class="p-img"></div>'}
       <div><div class="t">${esc(p.title)}</div>
       <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}</div></div>
-    </button>`).join('');
+    </button>`;
+}
+
+function wireCards(){
   document.querySelectorAll('.p').forEach(b =>
     b.onclick = () => load(b.dataset.sku));
+}
+
+async function search(q, offset = 0){
+  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${PAGE}&offset=${offset}`);
+  const d = await r.json();
+
+  if (!d.total){
+    $('#plist').innerHTML = '<div class="muted">Nothing matched that.</div>';
+    $('#more').innerHTML = ''; return;
+  }
+
+  const html = d.products.map(card).join('');
+  if (offset === 0) $('#plist').innerHTML = html;
+  else $('#plist').insertAdjacentHTML('beforeend', html);
+  wireCards();
+
+  // Say how many matched, and offer the rest -- never truncate in silence.
+  const shown = offset + d.products.length;
+  $('#more').innerHTML = shown < d.total
+    ? `<div class="muted" style="margin:10px 0 4px">Showing ${shown} of ${d.total} matches</div>
+       <button id="moreb">Show ${Math.min(PAGE, d.total - shown)} more</button>`
+    : (d.total > PAGE
+        ? `<div class="muted" style="margin:10px 0">All ${d.total} matches shown</div>` : '');
+  const mb = $('#moreb');
+  if (mb) mb.onclick = () => { mb.disabled = true; search(q, shown); };
 }
 
 function esc(s){ return (s||'').replace(/[<>&"]/g,
@@ -201,7 +227,7 @@ function params(sku){
 
 async function load(sku){
   current = sku;
-  $('#plist').innerHTML = '';
+  $('#plist').innerHTML = ''; $('#more').innerHTML = '';
   $('#out').innerHTML = '<div class="muted">Loading…</div>';
   const r = await fetch('/api/results?' + params(sku));
   if (!r.ok){ $('#out').innerHTML = '<div class="muted">Not found.</div>'; return; }
