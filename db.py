@@ -2,6 +2,36 @@
 
 Rows are written after every store completes, so a crash at store 80 of 92
 never costs the first 79.
+
+Storage shape -- read this before writing a query
+-------------------------------------------------
+`observations` is a VIEW, not a table. The physical tables are:
+
+    obs         one row per (run_id, store_id, sku) -- the volatile facts
+    products    one row per sku      -- title, brand, image, ...
+    store_meta  one row per store_id -- name, city, province
+
+The old single table stored every product and store fact on every row. With
+5,322 distinct SKUs and 225 stores across 295k rows, a product's title was
+written ~55 times over and a store's name ~1,300 times: ~86 MB of the 128 MB
+of content was duplication.
+
+The view exists so that split costs nothing at the call site. It reproduces the
+old table's 34 columns, in the old table's physical column order, so every
+existing SELECT -- including `SELECT *` in export_csv and `SELECT o.*` in
+latest_observations -- keeps working unchanged. `url` is not stored at all; it
+is recomputed from handle + store_id, which was verified to reproduce all
+295,512 stored urls exactly.
+
+What deliberately did NOT move to `products`: **thc and cbd**. They look like
+product attributes and the old code assumed they were, but 899 SKUs carry more
+than one distinct THC value -- real per-lot potency, since stores hold
+different tested batches. Collapsing them to one row per SKU would have
+destroyed that. See PLAN_followups.md #2.
+
+Writes go through write_rows() only, which upserts the two lookup tables and
+then inserts the observation. Nothing else may write to `obs` directly, or the
+lookups will drift out of sync with it.
 """
 
 from __future__ import annotations
@@ -11,107 +41,222 @@ from typing import Iterable
 
 import config
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS observations (
-  run_id        TEXT NOT NULL,
-  scraped_at    TEXT,
-  store_id      TEXT NOT NULL,
-  store_name    TEXT,
-  city          TEXT,
-  province      TEXT,
-  sku           TEXT NOT NULL,
+# --- the split -------------------------------------------------------------
+# One row per sku. Measured across all 295,512 rows, the number of SKUs (of
+# 5,322) carrying more than one distinct non-empty value:
+#
+#     brand 0   size 0   category 1   handle 1   image 2   title 3
+#
+# Those are products that were renamed or re-photographed over time. Collapsing
+# them keeps the most recent value and loses the older one, which is the right
+# trade for a tool that answers "who has this in stock now" -- the SKU, not the
+# title, is the identity.
+PRODUCT_COLUMNS = ["handle", "title", "brand", "category", "size", "image"]
+
+# One row per store_id. Verified: zero stores disagree on any of these.
+STORE_COLUMNS = ["store_name", "city", "province"]
+
+# Everything genuinely per-observation.
+#
+# thc/cbd are here on purpose -- they are per-lot, not per-product (899 SKUs
+# carry more than one THC value). See the module docstring.
+#
+# default_price is here for the same class of reason: it is a PRICE, and prices
+# are the one thing this database exists to track over time. It is NULL in
+# 293,058 of 295,512 rows, so keeping it per-observation costs almost nothing,
+# while making it product-level would rewrite every historical row with today's
+# list price.
+OBS_COLUMNS = [
+    "run_id", "scraped_at", "store_id", "sku",
+    "price", "member_price", "default_price", "available", "carried",
+    "stock_text", "thc", "cbd", "store_label", "status", "error",
+    "api_store_id", "store_id_match", "api_stock", "api_price",
+    "api_elite_price", "api_equiv_g", "api_raw", "api_member_price",
+    "is_elite",
+]
+
+# The view's column order. This is the ORIGINAL TABLE's physical order, not the
+# order of the CREATE TABLE that used to be here -- migrated columns had been
+# appended to the end over time. Matching the physical order keeps results.csv
+# byte-comparable with files exported before the split.
+VIEW_COLUMNS = [
+    "run_id", "scraped_at", "store_id", "store_name", "city", "province",
+    "sku", "handle", "title", "brand", "category", "size", "url",
+    "price", "member_price", "default_price", "available", "carried",
+    "stock_text", "thc", "cbd", "store_label", "status", "error",
+    "api_store_id", "store_id_match", "api_stock", "api_price",
+    "api_elite_price", "api_equiv_g", "api_raw", "api_member_price",
+    "is_elite", "image",
+]
+
+# Kept as the full set of fields a row dict may carry, for callers building one.
+COLUMNS = VIEW_COLUMNS
+
+# Tables and view are kept separate because normalize_db.py needs the tables
+# without the view: during migration the old physical `observations` table
+# still owns that name. Splitting a combined string on ";" is not an option --
+# several column comments below contain one.
+SCHEMA_TABLES = """
+CREATE TABLE IF NOT EXISTS products (
+  sku           TEXT PRIMARY KEY,
   handle        TEXT,
   title         TEXT,
   brand         TEXT,
   category      TEXT,
   size          TEXT,
-  url           TEXT,
+  image         TEXT     -- Shopify CDN url; resize with ?width=N
+);
+
+CREATE TABLE IF NOT EXISTS store_meta (
+  store_id   TEXT PRIMARY KEY,
+  store_name TEXT,
+  city       TEXT,
+  province   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obs (
+  run_id        TEXT NOT NULL,
+  scraped_at    TEXT,
+  store_id      TEXT NOT NULL,
+  sku           TEXT NOT NULL,
   price         REAL,
   member_price  REAL,
   default_price TEXT,
   available     INTEGER,
   carried       INTEGER,
   stock_text    TEXT,
-  thc           TEXT,
-  cbd           TEXT,
+  thc           TEXT,     -- per-LOT, not per-product; see module docstring
+  cbd           TEXT,     -- per-LOT, not per-product; see module docstring
   store_label   TEXT,
+  status        TEXT,
+  error         TEXT,
   api_store_id   TEXT,     -- store the site actually priced against
   store_id_match INTEGER,  -- 0 = priced as a DIFFERENT store; treat as suspect
   api_stock       INTEGER, -- exact unit count (DOM only says "In Stock")
-  api_member_price REAL,   -- member price straight from the pricing call
   api_price       REAL,    -- authoritative retail price
   api_elite_price REAL,    -- ELITE price, never rendered in the DOM
-  is_elite        INTEGER, -- 1 = ELITE-tier product (member price N/A)
-  image           TEXT,    -- Shopify CDN url; resize with ?width=N
   api_equiv_g     REAL,    -- gram equivalence toward the 30 g limit
   api_raw         TEXT,    -- full positional CSV, for fields not yet decoded
-  status        TEXT,
-  error         TEXT,
+  api_member_price REAL,   -- member price straight from the pricing call
+  is_elite        INTEGER, -- 1 = ELITE-tier product (member price N/A)
   PRIMARY KEY (run_id, store_id, sku)
 );
-CREATE INDEX IF NOT EXISTS idx_sku_time  ON observations(sku, scraped_at);
-CREATE INDEX IF NOT EXISTS idx_run       ON observations(run_id);
-CREATE INDEX IF NOT EXISTS idx_store_sku ON observations(store_id, sku);
+
+CREATE INDEX IF NOT EXISTS idx_sku_time  ON obs(sku, scraped_at);
+CREATE INDEX IF NOT EXISTS idx_run       ON obs(run_id);
+CREATE INDEX IF NOT EXISTS idx_store_sku ON obs(store_id, sku);
 """
 
-COLUMNS = [
-    "run_id", "scraped_at", "store_id", "store_name", "city", "province",
-    "sku", "handle", "title", "brand", "category", "size", "url",
-    "price", "member_price", "default_price", "available", "carried",
-    "stock_text", "thc", "cbd", "store_label", "api_store_id",
-    "store_id_match", "api_stock", "api_member_price", "api_price", "api_elite_price",
-    "api_equiv_g", "api_raw", "is_elite", "image", "status", "error",
-]
+SCHEMA_VIEW = f"""
+CREATE VIEW IF NOT EXISTS observations AS
+SELECT
+  o.run_id, o.scraped_at, o.store_id,
+  s.store_name, s.city, s.province,
+  o.sku, p.handle, p.title, p.brand, p.category, p.size,
+  '{config.BASE}/products/' || COALESCE(p.handle, '') || '?sID=' || o.store_id
+    AS url,
+  o.price, o.member_price, o.default_price,
+  o.available, o.carried, o.stock_text,
+  o.thc, o.cbd, o.store_label, o.status, o.error,
+  o.api_store_id, o.store_id_match, o.api_stock, o.api_price,
+  o.api_elite_price, o.api_equiv_g, o.api_raw, o.api_member_price,
+  o.is_elite, p.image
+FROM obs o
+LEFT JOIN products   p ON p.sku      = o.sku
+LEFT JOIN store_meta s ON s.store_id = o.store_id;
+"""
 
-# Columns added after the first schema shipped. CREATE TABLE IF NOT EXISTS will
-# not add them to an existing database, so patch them in on connect.
-_MIGRATIONS = [
-    ("carried", "INTEGER"),
-    ("api_store_id", "TEXT"),
-    ("store_id_match", "INTEGER"),
-    ("api_stock", "INTEGER"),
-    ("api_member_price", "REAL"),
-    ("api_price", "REAL"),
-    ("api_elite_price", "REAL"),
-    ("api_equiv_g", "REAL"),
-    ("api_raw", "TEXT"),
-    ("is_elite", "INTEGER"),
-    ("image", "TEXT"),
-]
+SCHEMA = SCHEMA_TABLES + SCHEMA_VIEW
+
+
+class LegacySchema(RuntimeError):
+    """The database still has the pre-split single `observations` table."""
+
+
+def _is_legacy(conn: sqlite3.Connection) -> bool:
+    """True if `observations` is still a physical table rather than a view."""
+    row = conn.execute(
+        "SELECT type FROM sqlite_master WHERE name='observations'").fetchone()
+    return bool(row) and row[0] == "table"
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or config.DB_PATH)
+    path = path or config.DB_PATH
+    conn = sqlite3.connect(path)
     # The web server reads while an index build writes. WAL lets those happen
     # at once, and the busy timeout makes a brief lock wait rather than raise
     # "database is locked" mid-request.
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
+
+    # A pre-split database is NOT migrated here. Rewriting a 200 MB file is a
+    # destructive, minutes-long operation, and doing it silently inside a
+    # function every command calls would mean it happening while someone was
+    # only trying to read. normalize_db.py does it deliberately, takes a backup
+    # first, and verifies before dropping anything.
+    if _is_legacy(conn):
+        conn.close()
+        raise LegacySchema(
+            f"{path} still uses the pre-split `observations` table.\n"
+            f"Migrate it once, with a backup and verification:\n"
+            f"    python normalize_db.py --db \"{path}\"")
+
     conn.executescript(SCHEMA)
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(observations)")}
-    for name, decl in _MIGRATIONS:
-        if name not in existing:
-            conn.execute(f"ALTER TABLE observations ADD COLUMN {name} {decl}")
     conn.commit()
     return conn
 
 
 def write_rows(conn: sqlite3.Connection, run_id: str, rows: Iterable[dict]) -> int:
-    payload = []
-    for r in rows:
-        r = {**r, "run_id": run_id}
-        payload.append(tuple(r.get(c) for c in COLUMNS))
-    if not payload:
+    """Persist observations, keeping the product/store lookups current.
+
+    The lookup upserts never overwrite a good value with a blank one: the two
+    fetchers populate slightly different field sets (the API index has no
+    default_price, the scan path has no productType), so a plain REPLACE would
+    let whichever ran last erase what the other knew.
+    """
+    rows = [{**r, "run_id": run_id} for r in rows]
+    if not rows:
         return 0
+
+    def _keep(table: str, col: str) -> str:
+        return f"{col}=COALESCE(NULLIF(excluded.{col}, ''), {table}.{col})"
+
+    prods = {}
+    stores = {}
+    for r in rows:
+        if r.get("sku"):
+            prods[r["sku"]] = tuple([r["sku"]] + [r.get(c) for c in PRODUCT_COLUMNS])
+        if r.get("store_id"):
+            stores[r["store_id"]] = tuple(
+                [r["store_id"]] + [r.get(c) for c in STORE_COLUMNS])
+
+    if prods:
+        cols = ["sku"] + PRODUCT_COLUMNS
+        conn.executemany(
+            f"INSERT INTO products ({','.join(cols)}) "
+            f"VALUES ({','.join('?' * len(cols))}) "
+            f"ON CONFLICT(sku) DO UPDATE SET "
+            + ", ".join(_keep("products", c) for c in PRODUCT_COLUMNS),
+            list(prods.values()))
+
+    if stores:
+        cols = ["store_id"] + STORE_COLUMNS
+        conn.executemany(
+            f"INSERT INTO store_meta ({','.join(cols)}) "
+            f"VALUES ({','.join('?' * len(cols))}) "
+            f"ON CONFLICT(store_id) DO UPDATE SET "
+            + ", ".join(_keep("store_meta", c) for c in STORE_COLUMNS),
+            list(stores.values()))
+
     # INSERT OR REPLACE + the (run_id, store_id, sku) primary key is what makes
     # re-running a partial sweep idempotent, and therefore --resume safe.
     conn.executemany(
-        f"INSERT OR REPLACE INTO observations ({','.join(COLUMNS)}) "
-        f"VALUES ({','.join('?' * len(COLUMNS))})",
-        payload,
+        f"INSERT OR REPLACE INTO obs ({','.join(OBS_COLUMNS)}) "
+        f"VALUES ({','.join('?' * len(OBS_COLUMNS))})",
+        [tuple(r.get(c) for c in OBS_COLUMNS) for r in rows],
     )
     conn.commit()
-    return len(payload)
+    return len(rows)
 
 
 def done_store_ids(conn: sqlite3.Connection, run_id: str) -> set[str]:

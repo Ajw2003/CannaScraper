@@ -151,6 +151,48 @@ Note that **market price is usually uniform chain-wide while the member
 (Cabana Club) price varies by store** — e.g. SKU 114205 was $15.24 in Medicine
 Hat and $15.44 in Calgary. Stock availability varies far more than price.
 
+### How it is stored
+
+`observations` is a **view**, not a table. Every query in this README works
+against it exactly as written; this section only matters if you are adding a
+column or writing directly to the database.
+
+| Table | Rows | Holds |
+|---|---|---|
+| `products` | 5,322 | `handle`, `title`, `brand`, `category`, `size`, `image` |
+| `store_meta` | 225 | `store_name`, `city`, `province` |
+| `obs` | 295,512 | everything that varies per observation |
+
+The old single table wrote every product and store fact onto every row, so a
+title was stored ~55 times over and a store name ~1,300 times. Splitting it
+took the file from **203 MB to 97 MB**. The view rejoins the three tables and
+presents the same 34 columns in the same order, so `SELECT *` is unchanged.
+
+`url` is not stored at all — it is rebuilt from `handle` + `store_id`, which
+was verified to reproduce all 295,512 stored urls exactly.
+
+Three things deliberately stayed per-observation, because they are **not**
+product attributes despite looking like them:
+
+- **`thc` / `cbd`** — per *lot*, not per product. 899 SKUs carry more than one
+  THC value, because different stores hold differently-tested batches.
+- **`default_price`** — a price, and prices are the thing this database exists
+  to track over time.
+
+Writes must go through `db.write_rows()`, which keeps the two lookup tables in
+step with `obs`. Writing to `obs` directly will let them drift apart.
+
+A database created before the split is refused with instructions rather than
+migrated silently:
+
+```bash
+python normalize_db.py
+```
+
+It backs up to `history.db.pre-normalize`, verifies all 34 columns of all
+295,512 rows against the original, and only then drops the old table. Rollback
+is deleting the new file and renaming the backup.
+
 ---
 
 ## Files
@@ -163,7 +205,11 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `catalog.py` | Pulls the public catalog; resolves the watchlist |
 | `browser.py` | Chromium contexts, age gate, store switching + verification |
 | `scrape.py` | Per-store extraction with retries |
-| `db.py` | SQLite history + CSV export |
+| `db.py` | SQLite history + CSV export; owns the schema and the `observations` view |
+| `normalize_db.py` | One-time migration of a pre-split database (backup + verify + swap) |
+| `db_bench.py` | Times the read queries, for judging a schema change |
+| `payload_probe.py` | Measures how much of the search response we keep, and whether the server will send less |
+| `scan_ceiling_probe.py` | Finds the SKU-per-call ceiling on `scan-multiple-items` |
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
 | `app.py` | The application: banner, web server, tunnel. What the exe runs |

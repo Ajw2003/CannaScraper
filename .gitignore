@@ -1,6 +1,12 @@
 history.db
 history.db-wal
 history.db-shm
+# Backup normalize_db.py takes before splitting the observations table.
+# Same size as the database itself -- keep it out of the repo.
+history.db.pre-normalize
+
+# Benchmark output from db_bench.py --save.
+bench_*.json
 
 # Holds the admin password hash and, if you use a named tunnel, its token.
 settings.json
