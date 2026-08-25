@@ -101,6 +101,13 @@ def _new(kind: str, label: str, total: int, **meta) -> dict:
         "sku": None,
         # Stores an index run skipped because a previous attempt did them.
         "resumed": 0,
+        # A store that failed transiently and went back in the queue is not a
+        # failed store, so it gets its own counter rather than inflating
+        # failed_stores with things that later succeeded.
+        "retries": 0,
+        # How the run is fanned out. One worker per healthy egress route.
+        "workers": 1,
+        "routes": [],
         "error": None,
         "queued_at": time.time(),
         "started": None,
@@ -174,11 +181,21 @@ def _index_body(job: dict, province: str, resume: str | None,
                 if ev.get("city"):
                     where = f"{where}, {ev['city']}"
                 job["current"] = job["store"] = where
-            if phase == "stored":
+            if phase == "begin":
+                job["workers"] = ev["workers"]
+                job["routes"] = ev["routes"]
+            elif phase == "stored":
                 job["rows"] += ev["rows"]
+            elif phase == "retry":
+                job["retries"] += 1
             elif phase == "failed":
                 job["failed_stores"] += 1
                 job["error"] = f"{ev['store']}: {ev['error']}"
+
+        # With one worker the route column is noise; with several it is the
+        # only way to read interleaved lines.
+        tag = (f"{ev.get('worker', ''):<7} " if ev.get("workers", 1) > 1
+               else "")
 
         if phase == "begin":
             with _lock:
@@ -188,6 +205,10 @@ def _index_body(job: dict, province: str, resume: str | None,
                    else f"{ev['total']} stores")
             echo(f"  [index] {province}: {how}, ~{ev['eta_min']:.0f} min   "
                  f"run {ev['run_id']}")
+            if ev["workers"] > 1:
+                routes = ", ".join(f"{r['name']}={r['route']}"
+                                   for r in ev["routes"])
+                echo(f"  [index] {ev['workers']} workers over {routes}")
         elif phase == "stored":
             # Not "N products, N in stock": the search endpoint returns
             # in-stock items only, so those were always the same number.
@@ -199,12 +220,18 @@ def _index_body(job: dict, province: str, resume: str | None,
                    if ev["rows"] != ev["instock"] else "")
             eta = ev["eta_min"]
             eta_s = f"   ETA {eta:.0f}m" if eta is not None else ""
-            echo(f"  [index] [{ev['done']}/{ev['total']}] "
+            echo(f"  [index] [{ev['done']}/{ev['total']}] {tag}"
                  f"{ev['store'][:26]:<26} {ev['instock']:>5} in stock"
                  f"{sold}{eta_s}{odd}")
+        elif phase == "retry":
+            cool = (f", route parked {ev['cooldown_s']:.0f}s"
+                    if ev.get("cooldown_s") else "")
+            echo(f"  [index] [{ev['done']}/{ev['total']}] {tag}"
+                 f"{ev['store'][:26]:<26} retry {ev['attempt']} "
+                 f"{ev['error']}{cool}")
         elif phase == "failed":
-            echo(f"  [index] [{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
-                 f"FAILED {ev['error']}")
+            echo(f"  [index] [{ev['done']}/{ev['total']}] {tag}"
+                 f"{ev['store'][:26]:<26} FAILED {ev['error']}")
 
     res = index_builder.build_index(
         province, limit=limit, resume=resume, on_progress=progress,
@@ -218,8 +245,14 @@ def _index_body(job: dict, province: str, resume: str | None,
 
     verb = "cancelled after" if res["cancelled"] else "done:"
     tail = f", {res['failed']} failed" if res["failed"] else ""
+    if res.get("retries"):
+        tail += f", {res['retries']} retried"
     echo(f"  [index] {province} {verb} {res['completed']}/{res['stores']} stores, "
          f"{res['rows']} rows, {res['minutes']:.1f} min{tail}")
+    for r in res.get("routes", []) if res.get("workers", 1) > 1 else []:
+        how = "ok" if r["healthy"] else f"cooling {r['cooldown_s']:.0f}s"
+        echo(f"  [index]   route {r['name']:<8} {r['route']:<30} "
+             f"{r['requests']:>5} req, {r['failures']} failed, {how}")
     if res.get("rate"):
         echo(f"  [index] {res['rate']}")
 

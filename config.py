@@ -115,6 +115,62 @@ SCAN_SKIP_RETRY_DAYS = 7
 # changes again; being wrong here costs nothing but a bad estimate.
 LIVE_SECONDS_PER_STORE = 2.2
 
+# --- Egress pool (index throughput) ----------------------------------------
+# An index run is rate-limit-bound, not latency-bound: product/search answers
+# in ~0.74s, under the 1.2s pacer interval, so ~2,300 requests at 50/min is
+# ~46 minutes and threading a single route changes nothing. The probe in
+# ratelimit_probe_summary.json shows why -- 1 unit per request, a FIXED ~60/min
+# window, and ONE budget shared between search and scan.
+#
+# The only lever left is holding more than one budget. Each proxy below is a
+# separate route with its own pacer, so four working routes turn ~46 minutes
+# into ~12.
+#
+# EMPTY BY DEFAULT, and that default is deliberate. Whether the budget is
+# actually keyed on source address is unverified -- if it keys on something
+# every route also sends, the pool buys nothing and just spends the same 60/min
+# faster. Prove it before relying on it:
+#
+#     python index_builder.py --probe-egress
+#
+# One request per route; it prints each route's X-RateLimit-Remaining and says
+# plainly whether the counters are independent or shared.
+#
+# A packaged copy can add routes without a rebuild via "egress_proxies" in
+# settings.json; the two lists are merged. Note that proxy URLs routinely carry
+# credentials, and settings.json is a plain file in the data directory --
+# egress.describe() strips them before anything is printed or served, but the
+# file itself is as sensitive as the credentials in it.
+EGRESS_PROXIES: list[str] = []      # e.g. ["http://user:pass@host:8080"]
+EGRESS_INCLUDE_DIRECT = True        # this machine's own address is route 1
+EGRESS_RATE_PER_MIN = 50            # PER ROUTE, with headroom under the 60
+EGRESS_FAIL_LIMIT = 3               # consecutive failures before a cooldown
+EGRESS_COOLDOWN_S = 120             # first cooldown; escalates per round
+EGRESS_COOLDOWN_MAX_S = 900
+
+# One-sided pacer jitter: the gap between requests is multiplied by
+# 1 + uniform(0, EGRESS_JITTER), so it only ever grows. That keeps
+# EGRESS_RATE_PER_MIN a hard ceiling (a symmetric jitter would let short
+# bursts exceed it) at a cost of ~6% throughput, and stops workers that came
+# out of a shared stall from re-aligning on the same instant. Retry backoff is
+# separately jittered -- see egress.backoff().
+#
+# This is for de-synchronisation, not for disguise. Nothing here rotates user
+# agents or shapes traffic to look human.
+EGRESS_JITTER = 0.12
+
+# Index workers. None = one per healthy route, which is the right answer:
+# workers beyond that share a budget and only raise the odds of a 429.
+INDEX_WORKERS = None
+
+# --- Index work queue ------------------------------------------------------
+# Store-level work items live in the `work_queue` table (workqueue.py), so a
+# run survives the process dying and N workers can claim from it atomically.
+WORK_LEASE_S = 300          # a claim held longer than this is redelivered
+WORK_MAX_ATTEMPTS = 3       # tries per store before the run gives up on it
+WORK_CLAIM_TRIES = 8        # candidates to race for before yielding
+WORK_KEEP_RUNS = 20         # queue rows retained; observations are the record
+
 # --- Browser ---------------------------------------------------------------
 HEADLESS = True
 NAV_TIMEOUT_MS = 45_000

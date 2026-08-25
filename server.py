@@ -29,6 +29,7 @@ import auth
 import catalog
 import config
 import db
+import egress
 import fetchers
 import jobs
 import main as cli          # reuse fill_missing_stores / tier_price
@@ -556,7 +557,11 @@ def _brief(job: dict) -> dict:
     return {k: job.get(k) for k in
             ("id", "kind", "label", "state", "province", "sku", "run_id",
              "total", "done", "current", "eta_min", "rows", "failed_stores",
-             "resumed", "skipped", "error", "started", "finished")}
+             "resumed", "skipped", "error", "started", "finished",
+             # Fan-out: how many routes are carrying this run, and how each
+             # is holding up. Route strings never carry proxy credentials --
+             # see egress.Egress.describe().
+             "retries", "workers", "routes")}
 
 
 # --- the index panel -------------------------------------------------------
@@ -589,8 +594,11 @@ def api_index_status():
                 # than restarted, which on Ontario is the difference between
                 # 10 minutes and 49.
                 "incomplete": bool(last and last["stores"] < len(sts)),
+                # Divided by the pool, since each route carries its own
+                # budget; egress.build_pool() is cheap and has no I/O.
                 "estimate_min": round(len(sts) * 25 * 60
-                                      / config.API_RATE_PER_MIN / 60),
+                                      / config.EGRESS_RATE_PER_MIN
+                                      / max(1, len(egress.build_pool())) / 60),
                 "job": _brief(job) if job else None,
             })
     finally:
@@ -608,7 +616,11 @@ def api_index_status():
             "running": running,
             # Measured headroom against the server's advertised budget, built
             # up from headers we already receive. See ratelimit.py.
-            "rate": ratelimit.history()}
+            "rate": ratelimit.history(),
+            # The configured egress pool, whether or not a run is active. One
+            # route means the index is capped at ~46 min per province no
+            # matter what; see egress.py for why.
+            "egress": [e.snapshot() for e in egress.build_pool()]}
 
 
 @app.post("/api/index/{province}")

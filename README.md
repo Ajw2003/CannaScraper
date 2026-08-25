@@ -495,10 +495,114 @@ allowed. Measured over 8 stores:
 is 6 — roughly half the allowance, with the pacer still capping the start rate.
 
 This applies only to the live check. `index_builder.py` uses `product/search`,
-which answers in **0.74 s** — under the 1.2 s pacer interval, so that endpoint
-genuinely is rate-limit-bound and keeps its own sequential pacer. Concurrency
-there would not raise throughput, only the odds of a 429. A larger page size
-would be the real win, but anything above `limit=50` returns an empty set.
+which answers in **0.74 s** — under the 1.2 s pacer interval, so on a single
+route that endpoint genuinely is rate-limit-bound and threading it would not
+raise throughput, only the odds of a 429. A larger page size would have been
+the easy win, but anything above `limit=50` returns an empty set.
+
+That leaves exactly one lever, and it is the subject of the next section.
+
+### Why a province takes 46 minutes, and the only way to change it
+
+An index run is ~2,300 requests (92 stores × ~25 pages). At `50/min` that is
+**46 minutes**; at the advertised 60/min ceiling it is **38**. No amount of
+concurrency moves that number, because the budget is counted once for the
+whole client, and **The limit, measured** below has the probe data: exactly
+one unit per request, a fixed 60 s window, and one budget shared between
+`product/search` and `scan-multiple-items`. Nothing about that is per-thread.
+
+So the only way to go faster is to hold more than one budget, and a budget is
+counted per source address. `egress.py` is a pool of routes — each with its own
+proxy, its own pacer, and its own health state — and `index_builder.py` runs
+one worker per healthy route. Four working routes turn ~46 minutes into ~12.
+
+**The pool is empty by default, and that default is deliberate.** Nothing
+proves the counter is keyed on IP; it could key on something every route also
+sends, in which case the pool buys nothing and just spends the same 60/min
+faster. About fifteen requests settle it:
+
+```
+python index_builder.py --probe-egress
+```
+
+It reads route 0's remaining budget, spends ten requests **on that route
+alone**, then immediately reads every other route. A shared counter comes back
+drawn down; an independent one comes back near full. Everything lands inside
+one fixed 60-second window, which is the whole point -- a slower comparison
+would straddle a window reset, and a refilled counter looks exactly like an
+independent budget.
+
+```
+route      via                        status  limit  remaining  note
+------------------------------------------------------------------------------
+direct     direct                        200     60         59  baseline
+direct     direct                        200     60         49  after 10 more requests on this route alone
+p1         http://198.51.100.7:8080      200     60         58  independent - own budget
+p2         http://203.0.113.4:8080       200     60         48  SHARED - saw route 0's spending
+
+3 routes, but only some hold their own budget -- expect about 2x, not 3x.
+```
+
+Read `verdict` rather than concluding from a run that felt quicker. Measured
+against two routes leaving this machine's own address, it reports:
+
+```
+direct     direct     200  60  59  baseline
+direct     direct     200  60  49  after 10 more requests on this route alone
+b          direct     200  60  48  SHARED - saw route 0's spending
+```
+
+**An earlier version of this probe could not tell the two cases apart.** It
+sent one request per route and called them shared when the readings landed
+within `routes - 1` of each other -- but two *independent* budgets both answer
+near the top of their own window, so they also land within 1. It happened to
+be right about the shared case and would have silently talked you out of a
+working pool. `egress.verdict_for()` is now a pure function with the truth
+table in `selftest.py`.
+
+Configure routes in `config.EGRESS_PROXIES`, or — for a packaged copy, with no
+rebuild — an `"egress_proxies"` list in `settings.json`. The two are merged.
+Proxy URLs routinely carry `user:pass`; `egress.Egress.describe()` strips
+credentials before anything is printed or served over the API, but the
+settings file itself is as sensitive as what is in it.
+
+**On jitter.** Two kinds, both for correctness rather than for disguise.
+Pacer jitter (`EGRESS_JITTER`, default 0.12) multiplies the gap between
+requests by `1 + uniform(0, jitter)` — one-sided, so it only ever makes the
+gap longer and the configured rate stays a hard ceiling, at a cost of ~6%
+throughput. Retry backoff is separately jittered so workers that hit the same
+429 do not wake together and hit it again. Nothing here rotates user agents or
+shapes traffic to look human.
+
+### The work queue
+
+Every store is a durable row in a `work_queue` table (`workqueue.py`), claimed
+atomically by the workers. That buys four things a plain in-memory list does
+not: work survives the process dying, N workers never fetch the same store
+twice, a worker that dies mid-store has its item redelivered after
+`WORK_LEASE_S`, and a store that fails transiently is retried
+(`WORK_MAX_ATTEMPTS`) instead of being lost.
+
+Why SQLite and not Redis or Celery, when "decouple the workers behind a message
+broker" is the textbook answer: this app ships as an executable someone unzips
+and double-clicks. Requiring a broker daemon to be installed and running before
+a stock index will build trades a working desktop tool for an ops problem. One
+queue, one producer, a handful of workers on one machine — the database already
+open in WAL mode gives the same four guarantees without a second moving part.
+`claim()` is the only function that would change on the day this needs to span
+machines.
+
+Claiming takes no explicit transaction: it is a conditional `UPDATE` that
+re-checks the row state, and the winner is whoever gets `rowcount == 1`.
+Redelivery is safe because `db.write_rows()` is `INSERT OR REPLACE` keyed on
+`(run_id, store_id, sku)`, so a store indexed twice simply overwrites itself.
+
+**One correctness fix came with this.** `_get()` used to return `None` on any
+error and `index_store()` read that as "no more pages" — so a single transient
+500 midway through pagination produced a *partial* store, and `_close_out()`
+then marked every product it never reached as sold out. It now raises, the
+store goes back in the queue, and the run reports it. A failed store is
+recoverable; a store confidently recorded as half empty is not.
 
 ### Measured headroom
 

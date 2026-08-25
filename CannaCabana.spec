@@ -43,6 +43,10 @@ hiddenimports = [
     "uvicorn.lifespan.off",
     # Imported inside functions or only from __main__.
     "index_builder",
+    # Reached only through index_builder / server, so listed here alongside
+    # the rest rather than relied on transitively.
+    "egress",
+    "workqueue",
     "selftest",
     "tunnel",
     "jobs",
