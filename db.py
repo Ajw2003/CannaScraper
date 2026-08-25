@@ -519,6 +519,57 @@ def indexed_store_ids(conn: sqlite3.Connection,
     return {r[0] for r in conn.execute(sql, params)}
 
 
+def _span_aggs(col: str) -> str:
+    """Six aggregates that bracket one cannabinoid column, split at 100.
+
+    Why split at all: the site's own data disagrees with itself about the
+    decimal place, and always by exactly 10x. Same SKU, same endpoint, one
+    index run:
+
+        202013  Liquid Diamond vape cart   97.78 at 187 stores, 977.80 at 25
+        202911  Key Lime Kush vape         98.00 at 198 stores, 980.00 at 1
+        113157  GoodNight 1000 mg softgels 1000.00 at 107, 100.00 at 87
+
+    A plain MIN/MAX over that reports "97.78 - 977.80", which is worse than
+    useless. Note 113157 inverts the picture -- there 1000 is the CORRECT
+    value, named in the product title -- so "discard anything over 100" would
+    be wrong just as often. Only the consensus can decide.
+
+    100 is the natural boundary because it is the one the display already
+    uses: a percentage cannot exceed 100, so anything above it is milligrams.
+    Bracketing each side separately lets the caller keep whichever side more
+    stores agree on, and guarantees the survivors share a unit.
+
+    CAST(... AS REAL) is what makes MIN/MAX numeric; these are TEXT columns,
+    and a lexicographic MIN would rank '9.5' above '28.76'. Blanks and the one
+    junk value ('.') cast to 0 and are excluded by the `> 0` test.
+    """
+    v = f"CAST(o.{col} AS REAL)"
+    lo = f"{v} > 0 AND {v} <= 100"
+    hi = f"{v} > 100"
+    return (f"SUM(CASE WHEN {lo} THEN 1 ELSE 0 END), "
+            f"MIN(CASE WHEN {lo} THEN {v} END), "
+            f"MAX(CASE WHEN {lo} THEN {v} END), "
+            f"SUM(CASE WHEN {hi} THEN 1 ELSE 0 END), "
+            f"MIN(CASE WHEN {hi} THEN {v} END), "
+            f"MAX(CASE WHEN {hi} THEN {v} END)")
+
+
+def pick_span(lo_n, lo_min, lo_max, hi_n, hi_min, hi_max):
+    """(min, max) for the magnitude cluster more stores agree on, or None.
+
+    Ties go to the sub-100 side, which is the percentage reading -- the far
+    more common kind of product, and the safer thing to understate.
+    """
+    if hi_n > lo_n and hi_min is not None:
+        return (hi_min, hi_max)
+    if lo_min is not None:
+        return (lo_min, lo_max)
+    if hi_min is not None:
+        return (hi_min, hi_max)
+    return None
+
+
 def province_facts(conn: sqlite3.Connection,
                    store_ids: list[str]) -> dict[str, dict]:
     """Per-SKU facts for a province, from the freshest row at each store.
@@ -527,8 +578,14 @@ def province_facts(conn: sqlite3.Connection,
     stock, the category, and THC/CBD -- instead of three separate scans of a
     90k-row table.
 
-    THC/CBD are product-level, so MAX() just picks a non-null value rather
-    than aggregating anything meaningful.
+    `thc` and `cbd` are (min, max) tuples across the stores in scope, or None.
+    They used to be MAX(), on the stated assumption that potency is a product
+    attribute. It is not: 899 SKUs carry more than one THC value, because
+    stores hold differently-tested lots. MAX() therefore reported the highest
+    potency any store had ever shown as if it were the product's own -- always
+    the most flattering number available. A range says what is actually known.
+
+    See _span_aggs() for why this is not a plain MIN/MAX.
     """
     if not store_ids:
         return {}
@@ -539,8 +596,8 @@ def province_facts(conn: sqlite3.Connection,
         SELECT o.sku,
                MAX(COALESCE(o.available, 0)),
                MAX(o.category),
-               MAX(o.thc),
-               MAX(o.cbd)
+               {_span_aggs('thc')},
+               {_span_aggs('cbd')}
         FROM observations o
         JOIN (
             SELECT sku, store_id, MAX(scraped_at) AS newest
@@ -555,7 +612,7 @@ def province_facts(conn: sqlite3.Connection,
         ids + ids,
     )
     return {r[0]: {"available": bool(r[1]), "category": r[2] or "",
-                   "thc": r[3] or "", "cbd": r[4] or ""}
+                   "thc": pick_span(*r[3:9]), "cbd": pick_span(*r[9:15])}
             for r in cur.fetchall()}
 
 

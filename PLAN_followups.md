@@ -84,7 +84,51 @@ can be read as the reference.
 
 ---
 
-## 2. `province_facts()` presents one arbitrary lot's potency as the product's
+## 2. ~~`province_facts()` presents one arbitrary lot's potency as the product's~~ FIXED 2026-08-25
+
+`province_facts()` now returns `(min, max)` across the stores in scope, and
+`server.potency_span()` renders it — a single figure when every store agrees to
+within 0.1, a range otherwise. Of 2,794 Alberta SKUs: 834 show a single value,
+308 show a range, 1,652 have no THC recorded.
+
+`/api/results` was changed to match. It had a milder version of the same bug —
+it took the *first* non-empty value from the row list, so the headline potency
+depended on which store happened to sort first. Both paths now apply the same
+rule and were confirmed to agree on 400 sampled SKUs.
+
+**A plain MIN/MAX would have been wrong**, which is worth knowing before
+touching this again. The site's own data carries 10x decimal errors — same
+SKU, same index run, different stores:
+
+| SKU | product | reported |
+|---|---|---|
+| 202013 | Liquid Diamond vape cart | 97.78 at 187 stores, **977.80** at 25 |
+| 202911 | Key Lime Kush vape | 98.00 at 198 stores, **980.00** at 1 |
+| 113157 | GoodNight **1000** mg softgels | 1000.00 at 107, **100.00** at 87 |
+
+So `MIN..MAX` would print "97.8–977.8". And "discard anything over 100" would
+be wrong just as often, because 113157 inverts it — there 1000 is the correct
+value, named in the product title. `db._span_aggs()` therefore brackets each
+side of 100 separately and `db.pick_span()` keeps whichever side more stores
+agree on, which also guarantees both ends share a unit.
+
+Before and after:
+
+| SKU | was `MAX()` | now |
+|---|---|---|
+| 202013 | 98.26 | 97.8–98.2% |
+| 202911 | 980.00 | 98% |
+| 112232 | 29.29 | 26.8–28.8% |
+| 104736 | 30.56 | 28.9–30.6% |
+| 113157 | 1000.00 | 100 mg |
+
+Also fixed in passing: `_MG_CATEGORIES` was missing `capsules & soft gels` and
+`oils & caps`, so 53 SKUs that dose in milligrams were rendering as
+percentages. Both top out at exactly 1000.
+
+Original report follows.
+
+---
 
 **Where:** [db.py:377](db.py) — `MAX(o.thc)`, `MAX(o.cbd)`
 
@@ -117,6 +161,39 @@ stop asserting the value is product-level.
 This is why `thc`/`cbd` stayed on the observation row during normalization
 rather than moving to `products` — collapsing them would have destroyed the
 evidence this fix needs.
+
+---
+
+## 7. The `n > 100` unit heuristic is unreliable, because the source data is
+
+**Where:** [server.py](server.py) — `potency()` / `_MG_CATEGORIES`
+
+`potency()` decides milligrams-vs-percent from the category, falling back to
+"anything over 100 must be mg, since a percentage cannot exceed 100". The
+premise is sound; the data is not. Maximum recorded THC by category:
+
+| category | max THC | reality |
+|---|---|---|
+| Pre-Rolls | 696.2 | a 10x error — pre-rolls are % |
+| Vapes | 980.0 | 10x error |
+| Flower | 307.7 | 10x error |
+| Concentrates | 750.0 | 10x error |
+| Shatter | 885.0 | 10x error |
+
+Every one of those renders as "696.2 mg" style nonsense if it is the value
+shown. The consensus rule added for #2 hides this on the search and results
+pages, because the corrupt readings are always the minority — but `potency()`
+itself is still reachable with a single raw value and will still mislabel one.
+
+**Fix:** make the category table authoritative and drop the magnitude
+fallback, treating an out-of-range percentage as unknown rather than guessing
+it is milligrams. That needs the category list completed first — 80 distinct
+category strings exist, including near-duplicates (`Pre-Rolls` / `Pre Roll` /
+`Pre-Rolled` / `joints` / `Joints`) that should probably be normalised at
+write time rather than matched at display time.
+
+**Not urgent:** #2's consensus rule means the wrong value has to win a majority
+vote before it can be displayed, and it currently never does.
 
 ---
 

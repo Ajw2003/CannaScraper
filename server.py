@@ -93,9 +93,17 @@ jobs.index_finished_hook = invalidate_facts
 # percentage for flower/vape/concentrate, milligrams for edibles. Values above
 # 100 are always mg, because a percentage cannot exceed 100 -- that is what
 # catches infused pre-rolls listed at e.g. 615.
+#
+# The `n > 100` half of that rule is only a fallback, and not a reliable one --
+# the site's own data carries 10x decimal errors, so Flower shows up at 307.7
+# and Pre-Rolls at 696.2, neither of which is milligrams. Naming a category
+# here is what actually settles the unit; see PLAN_followups.md #7.
 _MG_CATEGORIES = {
     "edibles", "gummies", "beverages", "chocolates", "oils & capsules",
     "capsules", "oils", "topicals", "soft chews", "mints", "baked goods",
+    # Both dose in mg and both top out at exactly 1000, but neither matched
+    # the names above, so they were rendering as percentages.
+    "capsules & soft gels", "oils & caps",
 }
 
 
@@ -110,6 +118,52 @@ def potency(value, category: str) -> str:
     if (category or "").strip().lower() in _MG_CATEGORIES or n > 100:
         return f"{n:g} mg"
     return f"{n:g}%"
+
+
+def potency_span(span, category: str) -> str:
+    """Format a (min, max) potency range across stores.
+
+    Stores hold differently-tested lots, so one number cannot be honest about
+    a province. A single figure is still shown when every store in scope
+    agrees to within 0.1 -- most products -- so this only widens where the
+    underlying data actually disagrees.
+    """
+    if not span:
+        return ""
+    lo, hi = span
+    if lo is None or hi is None:
+        return ""
+    # Trace CBD figures live below 1, where one decimal would render a real
+    # 0.04% as "0.0" -- a number the product does not have.
+    dp = 1 if hi >= 1 else 2
+    if round(lo, dp) == round(hi, dp):
+        return potency(lo, category)
+    # db.pick_span() guarantees both ends sit on the same side of 100, so the
+    # unit chosen from `lo` is right for `hi` too.
+    unit = " mg" if ((category or "").strip().lower() in _MG_CATEGORIES
+                     or lo > 100) else "%"
+    return f"{lo:.{dp}f}–{hi:.{dp}f}{unit}"
+
+
+def potency_span_of(values, category: str) -> str:
+    """Same, for a set of raw values already in hand (one store list).
+
+    Applies db.pick_span()'s consensus rule so a product's potency reads the
+    same whether it came from the search page or a store lookup.
+    """
+    lo_vals, hi_vals = [], []
+    for v in values:
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        (hi_vals if n > 100 else lo_vals).append(n)
+    span = db.pick_span(
+        len(lo_vals), min(lo_vals, default=None), max(lo_vals, default=None),
+        len(hi_vals), min(hi_vals, default=None), max(hi_vals, default=None))
+    return potency_span(span, category)
 
 
 def _scope(lat=None, lng=None, near=None, top=None, province=None,
@@ -270,10 +324,10 @@ def api_search(q: str = "", limit: int = 50, offset: int = 0,
             "size": v["size"],
             "category": facts.get(v["sku"], {}).get("category") or v["category"],
             "in_stock": bool(facts.get(v["sku"], {}).get("available")),
-            "thc": potency(facts.get(v["sku"], {}).get("thc"),
-                           facts.get(v["sku"], {}).get("category", "")),
-            "cbd": potency(facts.get(v["sku"], {}).get("cbd"),
-                           facts.get(v["sku"], {}).get("category", "")),
+            "thc": potency_span(facts.get(v["sku"], {}).get("thc"),
+                                facts.get(v["sku"], {}).get("category", "")),
+            "cbd": potency_span(facts.get(v["sku"], {}).get("cbd"),
+                                facts.get(v["sku"], {}).get("category", "")),
             "image": thumb(v.get("image"), 160),
         } for v in page],
     }
@@ -327,12 +381,18 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
                     "size": v["size"], "image": thumb(v.get("image"), 320),
                     "category": next((r.get("category") for r in rows
                                       if r.get("category")), v.get("category", "")),
-                    "thc": potency(next((r.get("thc") for r in rows if r.get("thc")), ""),
-                                   next((r.get("category") for r in rows
-                                         if r.get("category")), "")),
-                    "cbd": potency(next((r.get("cbd") for r in rows if r.get("cbd")), ""),
-                                   next((r.get("category") for r in rows
-                                         if r.get("category")), ""))},
+                    # A range over the stores actually being shown, by the same
+                    # rule the search page uses. Taking the first non-empty
+                    # value here meant the headline potency depended on which
+                    # store happened to sort first.
+                    "thc": potency_span_of(
+                        (r.get("thc") for r in rows),
+                        next((r.get("category") for r in rows
+                              if r.get("category")), "")),
+                    "cbd": potency_span_of(
+                        (r.get("cbd") for r in rows),
+                        next((r.get("category") for r in rows
+                              if r.get("category")), ""))},
         "scope": scope, "checked": len(store_list),
         "in_stock": sum(1 for r in packed if r["available"]),
         "age_hours": age,
