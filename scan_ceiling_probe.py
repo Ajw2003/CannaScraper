@@ -120,34 +120,42 @@ def main(argv=None) -> int:
     print("=" * 74)
 
     # --- STEP 1 -----------------------------------------------------------
-    print("\nSTEP 1  Load the known SKU list")
-    variants = [v for v in _load_catalog() if v.get("sku") and v.get("variant_id")]
-    if not variants:
-        print("  FAIL  catalog.json has no usable sku/variant_id pairs.")
-        return 2
-    # De-duplicate on sku: the payload is a list of one-key maps and a repeated
-    # sku would make the coverage arithmetic below lie.
-    seen, pairs = set(), []
-    for v in variants:
-        s = str(v["sku"])
-        if s not in seen:
-            seen.add(s)
-            pairs.append({s: v["variant_id"]})
-    print(f"  PASS  {len(pairs):,} distinct SKUs available to send")
-
-    # --- STEP 2 -----------------------------------------------------------
-    print("\nSTEP 2  Pick a store that answers this endpoint")
+    print("\nSTEP 1  Pick a store with a deep in-stock history")
     store_list = S.get_stores(province=args.province)
     skip = set(config.SCAN_SKIP_STORES)
-    cand = [s for s in store_list if str(s["store_id"]) not in skip]
-    if not cand:
-        print("  FAIL  every store in the province is on the scan skip list.")
+    conn = db.connect()
+    try:
+        sid = str(args.store) if args.store else _busiest_store(
+            conn, args.province, skip)
+        if not sid:
+            print("  FAIL  no store in the database has in-stock history.")
+            return 2
+        carried = _carried_skus(conn, sid)
+    finally:
+        conn.close()
+
+    store = next((s for s in store_list if str(s["store_id"]) == sid), None)
+    label = f"{store['name']}, {store.get('city','')}" if store else "(unknown)"
+    print(f"  PASS  store {sid} — {label}")
+    print(f"        {len(carried):,} SKUs seen in stock there   "
+          f"(skip list: {sorted(skip) or 'none'})")
+
+    # --- STEP 2 -----------------------------------------------------------
+    print("\nSTEP 2  Build the payload, known-carried SKUs first")
+    catalog = _load_catalog()
+    if not catalog:
+        print("  FAIL  catalog.json has no usable sku/variant_id pairs.")
         return 2
-    store = next((s for s in cand if str(s["store_id"]) == str(args.store)),
-                 cand[0]) if args.store else cand[0]
-    sid = str(store["store_id"])
-    print(f"  PASS  store {sid} — {store['name']}, {store.get('city','')}"
-          f"   (skipping {sorted(skip)})")
+
+    ordered = [s for s in carried if s in catalog]
+    rest = [s for s in catalog if s not in set(ordered)]
+    pairs = [{s: catalog[s]} for s in ordered + rest]
+    print(f"  PASS  {len(pairs):,} distinct SKUs to send "
+          f"({len(ordered):,} known-carried, then {len(rest):,} others)")
+    if len(ordered) < 100:
+        print("        NOTE  fewer than 100 known-carried SKUs, so rungs above")
+        print("              that are mostly not-carried items. The ceiling is")
+        print("              still valid; coverage is what is being measured.")
 
     # --- STEP 3 -----------------------------------------------------------
     print("\nSTEP 3  Climb the ladder until it breaks or truncates")
@@ -167,7 +175,10 @@ def main(argv=None) -> int:
         batch = pairs[:n]
         status, body, secs = _post(sid, batch)
 
-        if status != 200 or not isinstance(body, dict) or not body.get("success"):
+        # Note what is NOT checked here: body["success"]. It is false whenever
+        # any requested SKU is not carried, which is the normal case for a
+        # large batch. Only the transport and the coverage count matter.
+        if status != 200 or not isinstance(body, dict):
             snippet = body if isinstance(body, str) else json.dumps(body)[:60]
             print(f"        {n:>6}  {status:>5}  {secs:>6.1f}  "
                   f"{'-':>10}  {'-':>7}  {'-':>7}  {'-':>8}  REJECTED {snippet[:30]}")
