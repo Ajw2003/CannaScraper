@@ -5,6 +5,8 @@ history.db-shm
 # Holds the admin password hash and, if you use a named tunnel, its token.
 settings.json
 ratelimit.json
+# Appends a row per request on every probe run.
+ratelimit_probe.csv
 
 # Build output and the vendored tunnel binary.
 dist/

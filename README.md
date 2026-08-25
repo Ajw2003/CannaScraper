@@ -173,6 +173,8 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `tunnel.py` | Runs `cloudflared`, finds the public URL, dies with the app |
 | `server.py` | FastAPI routes behind the web UI |
 | `selftest.py` | 19 checks against a throwaway data dir; no network |
+| `ratelimit.py` | Records how close each run came to the request budget |
+| `ratelimit_probe.py` | Dev tool: measures the real rate limit. Not bundled |
 | `build.ps1` | Numbered, pass/fail build into `dist\CannaCabana\` |
 
 ## The app
@@ -468,11 +470,40 @@ why concurrency was free there. An index run at 50/min gets down to **14 of 60
 remaining** — so the pacer is not being cautious for the sake of it, and
 raising `API_RATE_PER_MIN` really would start drawing 429s.
 
-Treat the number as "how close we were seen to get", not an exact count: the
-counter does not decrement one per request (observed drops ranged from under 1
-to about 3), so the window is probably rolling and the budget probably shared
-between the two endpoints. History accumulates in `ratelimit.json` in the data
-directory.
+History accumulates in `ratelimit.json` in the data directory. A 429 that
+arrives with budget to spare is recorded separately and attributed to the store
+that produced it, so a broken store can never masquerade as rate pressure.
+
+### The limit, measured
+
+`ratelimit_probe.py` answers this empirically instead of trusting the header.
+It ran 297 requests on 2026-08-25 and drew exactly one 429:
+
+| Question | Answer |
+|---|---|
+| Cost per request | **exactly 1 unit** (drops were 1,1,1,1,1,1) |
+| Window | **fixed, 60 s** — the allowance snaps back at a wall-clock boundary rather than trickling |
+| Shared across endpoints? | **yes** — 10 calls on `product/search` moved the *scan* endpoint's remaining from 59 to 46 |
+| Where it refuses | **request 61 in a window**, with `Retry-After: 9` |
+
+So the advertised 60 is exact and enforced. Two consequences worth knowing:
+
+- **The shared budget is why `jobs.py` runs one job at a time.** An index at
+  50/min plus a concurrent live check would breach one 60/min allowance, not
+  two. That design was a guess when it was written; it is now evidence-based.
+- **50/min leaves 10 spare per window**, and a clean 60/min run reached 4
+  remaining. There is real headroom but not much, which is why
+  `API_RATE_PER_MIN` stays where it is.
+
+```bash
+.venv\Scripts\python ratelimit_probe.py                 # safe phases, no 429
+.venv\Scripts\python ratelimit_probe.py --find-ceiling  # ramps until refused
+.venv\Scripts\python ratelimit_probe.py --dry-run       # plan only
+```
+
+Per-request data appends to `ratelimit_probe.csv`, conclusions to
+`ratelimit_probe_summary.json` — separate from `ratelimit.json` so an
+experiment never contaminates the operational telemetry.
 
 Switch back any time with `--fetcher browser` or `config.FETCHER`.
 

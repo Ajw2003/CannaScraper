@@ -4,12 +4,18 @@
     .venv\\Scripts\\python ratelimit_probe.py --find-ceiling  # adds the ramp
     .venv\\Scripts\\python ratelimit_probe.py --dry-run       # plan only
 
-`X-RateLimit-Limit: 60` is what the server advertises. In 295,000 requests we
-have never seen it bind: the only two 429s on record both came from store 528,
-which also returns HTTP 500 and has never once succeeded. So the ceiling is
-unverified, and the counter does not even decrement one per request -- observed
-drops ranged from under 1 to about 3 -- which means the accounting is not
-understood either.
+`X-RateLimit-Limit: 60` is what the server advertises. This script checks
+whether that is true rather than assuming it.
+
+First run, 2026-08-25, 297 requests:
+
+    A  one request costs exactly one unit (drops were 1,1,1,1,1,1)
+    B  fixed 60s window; the allowance snaps back to full, it does not trickle
+    D  the budget is SHARED with scan-multiple-items
+    C  refused at request 61 of a window, with Retry-After: 9
+
+So the advertised figure is exact and enforced. Re-run it if their behaviour
+seems to change; the CSV appends, so runs stay comparable.
 
 Four phases, each answering one question:
 
@@ -75,6 +81,7 @@ class Probe:
         self.deadline = time.time() + args.max_minutes * 60
         self.rows: list[dict] = []
         self.store = None
+        self.ceiling: dict = {}
         self.sku = None
         self.variant_id = None
         self._fh = None
@@ -220,7 +227,11 @@ class Probe:
     def phase_c(self) -> dict:
         """Where does it actually refuse?"""
         say("\nPhase C - ceiling ramp. Stops at the first 429.")
-        result = {"steps": [], "first_429": None, "max_clean_rate": None}
+        # Kept on the instance, not just in a local: raising Refused
+        # unwinds past the return, and the clean steps leading up to
+        # the refusal are the more useful half of the answer.
+        result = self.ceiling = {"steps": [], "first_429": None,
+                                 "max_clean_rate": None}
         for rate in (30, 40, 50, 60, 70, 80):
             need = rate
             if self.sent + need > self.args.max_requests:
@@ -376,7 +387,9 @@ def main(argv=None) -> int:
             time.sleep(COOLDOWN_S)
             summary["phases"]["C_ceiling"] = probe.phase_c()
     except Refused as e:
-        summary["phases"].setdefault("C_ceiling", {})["first_429"] = json.loads(str(e))
+        found = getattr(probe, "ceiling", None) or {"steps": []}
+        found["first_429"] = json.loads(str(e))
+        summary["phases"]["C_ceiling"] = found
         summary["outcome"] = "refused - ceiling found"
     except Budget as e:
         summary["outcome"] = f"stopped early: {e}"

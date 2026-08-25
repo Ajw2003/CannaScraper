@@ -81,7 +81,14 @@ def _get(pacer: _Pacer, term: str, store_id: str, page: int,
     except urllib.error.HTTPError as e:
         if e.code == 429:
             ratelimit.observe(e.headers, 429)
-            time.sleep(20)
+            # Measured: the server sends Retry-After with the seconds left in
+            # the window -- 9s when we hit the ceiling at request 61 of 60.
+            # Sleeping a flat 20s wasted more than twice that.
+            try:
+                wait = float(e.headers.get("Retry-After") or 0)
+            except (TypeError, ValueError):
+                wait = 0.0
+            time.sleep(min(wait, 60.0) if wait > 0 else 20.0)
             return _get(pacer, term, store_id, page, province)
         return None
     except Exception:

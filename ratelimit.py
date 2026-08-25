@@ -1,18 +1,22 @@
 """How close we actually get to the server's request budget.
 
 Every response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`, and we
-used to discard both. That left "60 per minute" as a number the server
-advertises and nobody had checked -- no 429 has ever been observed, so where it
-actually refuses is unknown.
+used to discard both. Recording the low-water mark costs nothing -- no extra
+requests, just reading two headers we already receive -- and it is what tells
+you whether a run grazed the limit or was nowhere near it.
 
-Recording the low-water mark costs nothing: no extra requests, just reading two
-headers we already receive.
+Measured by ratelimit_probe.py on 2026-08-25, so these are facts rather than
+inferences:
 
-**Read the numbers with care.** The counter does not decrement one per request.
-Measured drops across endpoints ranged from under 1 to about 3 per call, which
-suggests a rolling window and probably a budget shared between the catalogue
-search and the per-store price scan. So treat the minimum as "the closest we
-were seen to get", not as an exact count of anything.
+  * one request costs exactly one unit
+  * the window is FIXED and 60 seconds long -- the allowance snaps back to
+    full at a wall-clock boundary, it does not trickle back
+  * the budget is SHARED between product/search and scan-multiple-items
+  * the advertised 60 is enforced exactly: request 61 in a window is refused
+    with `Retry-After` giving the seconds left
+
+The sharing is why jobs.py runs one job at a time. An index at 50/min plus a
+concurrent live check would breach a single 60/min allowance, not two.
 """
 
 from __future__ import annotations
