@@ -1,0 +1,14 @@
+﻿# Everything above, plus what a source checkout wants.
+#
+#   .venv\Scripts\pip install -r requirements-dev.txt
+#   .venv\Scripts\python -m playwright install chromium
+
+-r requirements.txt
+
+# The "Live: real browser" source. The packaged app hides that option; keep
+# this installed here so the DOM backend stays runnable when the site's API
+# changes shape and you need to diff the two with `main.py --compare`.
+playwright==1.62.0
+
+# build.ps1
+pyinstaller>=6.16

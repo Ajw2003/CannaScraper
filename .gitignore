@@ -1,1 +1,11 @@
-﻿history.db
+history.db
+history.db-wal
+history.db-shm
+
+# Holds the admin password hash and, if you use a named tunnel, its token.
+settings.json
+
+# Build output and the vendored tunnel binary.
+dist/
+build/
+cloudflared.exe

@@ -1,7 +1,11 @@
-"""Local web UI.
+"""Web UI routes.
 
     .venv\\Scripts\\python server.py
-    -> http://localhost:8000        (and http://<your-lan-ip>:8000 from a phone)
+    -> http://127.0.0.1:8000        (and http://<your-lan-ip>:8000 from a phone)
+
+That entry point is local and LAN only. `app.py` is the full application --
+same routes, plus the public tunnel and the console banner -- and is what the
+packaged exe runs.
 
 Thin layer over what already exists: catalog.search for products,
 stores.nearest for geography, db.latest_observations for instant answers, and
@@ -13,25 +17,25 @@ progress rather than blocking the request.
 
 from __future__ import annotations
 
-import asyncio
 import socket
 import time
-import uuid
-from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
+import auth
 import catalog
 import config
 import db
 import fetchers
+import jobs
 import main as cli          # reuse fill_missing_stores / tier_price
+import paths
 import stores as S
 
 app = FastAPI(title="Canna Cabana stock")
-HERE = Path(__file__).parent
-JOBS: dict[str, dict] = {}
+WEB = paths.APP_DIR / "web"
 
 
 # --- helpers ---------------------------------------------------------------
@@ -66,6 +70,21 @@ def province_facts(province: str) -> dict[str, dict]:
         conn.close()
     _FACTS[province] = (time.time(), facts)
     return facts
+
+
+def invalidate_facts(province: str | None, result=None) -> None:
+    """Forget the cached facts for a province after something wrote rows.
+
+    Without this a finished index build is invisible for up to two minutes,
+    which reads as "the refresh did nothing".
+    """
+    if province:
+        _FACTS.pop(province, None)
+    else:
+        _FACTS.clear()
+
+
+jobs.index_finished_hook = invalidate_facts
 
 
 # THC/CBD arrive as a bare number whose unit depends on the product: a
@@ -174,7 +193,7 @@ def _pack(rows: list[dict], store_list: list[dict],
 
 @app.get("/")
 def index():
-    return FileResponse(HERE / "web" / "index.html")
+    return FileResponse(WEB / "index.html")
 
 
 @app.get("/api/provinces")
@@ -322,52 +341,202 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
 
 
 @app.post("/api/refresh")
-async def api_refresh(sku: str, lat: float | None = None, lng: float | None = None,
-                      near: str | None = None, top: int = config.DEFAULT_TOP,
-                      province: str | None = None, all_stores: bool = False,
-                      fetcher: str | None = None):
-    """Kick off a live re-check. Returns a job id to poll."""
+def api_refresh(sku: str, lat: float | None = None, lng: float | None = None,
+                near: str | None = None, top: int = config.DEFAULT_TOP,
+                province: str | None = None, all_stores: bool = False,
+                fetcher: str | None = None,
+                _admin: bool = Depends(auth.require_admin)):
+    """Queue a live re-check. Returns a job id to poll.
+
+    Password-gated: it spends the shared rate-limit budget and sends traffic
+    to the site from whichever machine is hosting this.
+    """
     cat = catalog.get_catalog(verbose=False)
     targets = _targets(sku, cat)
     if not targets:
         return JSONResponse({"error": f"unknown sku {sku}"}, status_code=404)
+    try:
+        fetchers.check_available(fetcher)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-    store_list, _ = _scope(lat, lng, near, top, province, all_stores)
-    job_id = uuid.uuid4().hex[:12]
-    JOBS[job_id] = {"done": 0, "total": len(store_list), "store": "",
-                    "finished": False, "error": None, "started": time.time()}
-    asyncio.create_task(_run_refresh(job_id, store_list, targets, fetcher))
-    return {"job": job_id, "total": len(store_list)}
+    store_list, _scope_label = _scope(lat, lng, near, top, province, all_stores)
+    prov = province or config.PROVINCE
+    title = targets[0]["title"][:40]
+
+    def make(job):
+        return _run_refresh(job, store_list, targets, prov, fetcher)
+
+    job = jobs.submit_live(f"Live check: {title} ({len(store_list)} stores)",
+                           len(store_list), make, sku=sku, province=prov)
+    return {"job": job["id"], "total": len(store_list)}
 
 
-async def _run_refresh(job_id: str, store_list: list[dict],
-                       targets: list[dict], fetcher: str | None = None):
-    job = JOBS[job_id]
-    run_id = f"web-{job_id}"
+async def _run_refresh(job: dict, store_list: list[dict], targets: list[dict],
+                       province: str, fetcher: str | None = None) -> None:
+    """Re-check one product across stores. Runs on the job worker's own loop.
+
+    Per-store failures are recorded and the sweep continues -- one store
+    timing out should not cost the other ninety-one.
+    """
+    run_id = f"web-{job['id']}"
     conn = db.connect()
     try:
         async with fetchers.get_fetcher(fetcher) as f:
             for i, st in enumerate(store_list, 1):
-                job["store"] = f"{st['name']}, {st['city']}"
+                if job["cancel_requested"]:
+                    break
+                job["store"] = job["current"] = f"{st['name']}, {st['city']}"
                 try:
                     rows = await f.fetch(st, targets, verbose=False)
                     db.write_rows(conn, run_id, rows)
+                    job["rows"] += len(rows)
                 except Exception as e:                      # noqa: BLE001
+                    job["failed_stores"] += 1
                     job["error"] = f"{st['name']}: {type(e).__name__}"
                 job["done"] = i
-    except Exception as e:                                  # noqa: BLE001
-        job["error"] = f"{type(e).__name__}: {e}"[:200]
     finally:
         conn.close()
-        job["finished"] = True
+        invalidate_facts(province)
 
 
 @app.get("/api/job/{job_id}")
 def api_job(job_id: str):
-    job = JOBS.get(job_id)
+    job = jobs.get(job_id)
     if not job:
         return JSONResponse({"error": "no such job"}, status_code=404)
     return job
+
+
+@app.get("/api/jobs")
+def api_jobs():
+    """Everything active plus recent history, for the index panel."""
+    return {"jobs": [_brief(j) for j in jobs.all_jobs()[:20]]}
+
+
+def _brief(job: dict) -> dict:
+    return {k: job.get(k) for k in
+            ("id", "kind", "label", "state", "province", "sku", "run_id",
+             "total", "done", "current", "eta_min", "rows", "failed_stores",
+             "error", "started", "finished")}
+
+
+# --- the index panel -------------------------------------------------------
+
+@app.get("/api/index/status")
+def api_index_status():
+    """Per-province coverage and whatever is running. Open -- it is read-only."""
+    by_prov: dict[str, list] = {}
+    for st in S.get_stores(province=""):
+        if st.get("province"):
+            by_prov.setdefault(st["province"], []).append(st)
+
+    conn = db.connect()
+    try:
+        out = []
+        for prov, sts in sorted(by_prov.items(), key=lambda kv: -len(kv[1])):
+            ids = [s["store_id"] for s in sts]
+            indexed, age = db.index_coverage(conn, ids)
+            runs = db.index_runs(conn, prov, limit=1)
+            last = runs[0] if runs else None
+            job = jobs.active_for_province(prov)
+            out.append({
+                "province": prov,
+                "stores": len(sts),
+                "indexed": indexed,
+                "age_hours": age,
+                "last_run": last["run_id"] if last else None,
+                "last_run_stores": last["stores"] if last else 0,
+                # A run that never reached every store can be resumed rather
+                # than restarted, which on Ontario is the difference between
+                # 10 minutes and 49.
+                "incomplete": bool(last and last["stores"] < len(sts)),
+                "estimate_min": round(len(sts) * 25 * 60
+                                      / config.API_RATE_PER_MIN / 60),
+                "job": _brief(job) if job else None,
+            })
+    finally:
+        conn.close()
+    return {"provinces": out, "busy": bool(jobs.active())}
+
+
+@app.post("/api/index/{province}")
+def api_index_start(province: str, resume: str | None = None,
+                    limit: int | None = None,
+                    _admin: bool = Depends(auth.require_admin)):
+    """Queue a province rebuild. `resume=auto` picks up an interrupted run."""
+    store_list = S.get_stores(province=province)
+    if not store_list:
+        return JSONResponse({"error": f"unknown province {province!r}"},
+                            status_code=404)
+
+    if resume == "auto":
+        conn = db.connect()
+        try:
+            runs = db.index_runs(conn, province, limit=1)
+        finally:
+            conn.close()
+        resume = (runs[0]["run_id"]
+                  if runs and runs[0]["stores"] < len(store_list) else None)
+
+    try:
+        job = jobs.submit_index(province, resume=resume, limit=limit)
+    except jobs.Busy as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    return {"job": job["id"], "province": province, "resume": resume}
+
+
+@app.post("/api/index/{province}/cancel")
+def api_index_cancel(province: str,
+                     _admin: bool = Depends(auth.require_admin)):
+    job = jobs.active_for_province(province)
+    if not job:
+        return JSONResponse({"error": "nothing running for that province"},
+                            status_code=404)
+    jobs.cancel(job["id"])
+    return {"ok": True, "job": job["id"]}
+
+
+# --- capabilities and login ------------------------------------------------
+
+@app.get("/api/capabilities")
+def api_capabilities(request: Request):
+    return {"playwright": fetchers.have_browser(),
+            "sources": fetchers.available(),
+            "admin": auth.verify_token(request.cookies.get(auth.COOKIE, ""))}
+
+
+class Login(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def api_login(body: Login, request: Request, response: Response):
+    key = auth.client_key(request)
+    wait = auth.throttled(key)
+    if wait:
+        return JSONResponse(
+            {"error": f"too many attempts — wait {wait:.0f}s"}, status_code=429)
+
+    if not auth.check_password(body.password):
+        auth.note_failure(key)
+        return JSONResponse({"error": "wrong password"}, status_code=401)
+
+    auth.note_success(key)
+    # Behind the tunnel the hop to us is plain http, so trust the forwarded
+    # scheme to decide whether the cookie may be marked Secure.
+    https = (request.url.scheme == "https"
+             or request.headers.get("x-forwarded-proto") == "https")
+    response.set_cookie(auth.COOKIE, auth.make_token(), httponly=True,
+                        samesite="lax", secure=https,
+                        max_age=auth.SESSION_HOURS * 3600)
+    return {"ok": True}
+
+
+@app.post("/api/logout")
+def api_logout(response: Response):
+    response.delete_cookie(auth.COOKIE)
+    return {"ok": True}
 
 
 def _lan_ip() -> str:
@@ -383,13 +552,24 @@ def _lan_ip() -> str:
 
 
 if __name__ == "__main__":
+    # Local + LAN only, no tunnel. `python app.py` is the full launcher and is
+    # what the packaged exe runs; this stays as the plain dev entry point.
     import uvicorn
 
-    port = 8000
+    settings = auth.load()
+    port = int(settings["port"])
+    generated = auth.ensure_configured()
+
     print("=" * 60)
-    print("  Canna Cabana stock — web UI")
+    print("  Canna Cabana stock — web UI (dev)")
     print("=" * 60)
-    print(f"  This computer :  http://localhost:{port}")
+    print(f"  This computer :  http://127.0.0.1:{port}")
     print(f"  Phone / LAN   :  http://{_lan_ip()}:{port}")
+    if generated:
+        print(f"  Admin password:  {generated}   <- write this down")
+    else:
+        print("  Admin password:  already set")
+    print(f"  Data          :  {paths.DATA_DIR}")
     print("\n  Ctrl-C to stop.\n")
+    jobs.start()
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

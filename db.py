@@ -130,15 +130,27 @@ def latest_run_id(conn: sqlite3.Connection) -> str | None:
 
 def export_csv(conn: sqlite3.Connection, run_id: str,
                path: str | None = None) -> int:
-    import pandas as pd
+    """Dump one run to CSV.
+
+    This used pandas, which was the only thing in the project that did -- and
+    it dragged numpy, tzdata and dateutil into every build for one
+    read_sql_query and one to_csv. utf-8-sig keeps Excel happy, as before.
+    """
+    import csv
 
     path = path or config.CSV_PATH
-    df = pd.read_sql_query(
+    cur = conn.execute(
         "SELECT * FROM observations WHERE run_id=? ORDER BY sku, price",
-        conn, params=(run_id,),
+        (run_id,),
     )
-    df.to_csv(path, index=False, encoding="utf-8-sig")
-    return len(df)
+    n = 0
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([d[0] for d in cur.description])
+        for row in cur:
+            writer.writerow(["" if v is None else v for v in row])
+            n += 1
+    return n
 
 
 def mismatched_stores(conn: sqlite3.Connection, run_id: str) -> list[tuple]:
@@ -261,6 +273,34 @@ def index_coverage(conn: sqlite3.Connection,
     except (TypeError, ValueError):
         age = None
     return n, age
+
+
+def index_runs(conn: sqlite3.Connection, province: str,
+               limit: int = 5) -> list[dict]:
+    """Recent index runs for one province, newest first.
+
+    Drives the Resume button: a run covering fewer stores than the province
+    has was interrupted, and `index_builder --resume <run_id>` will pick up
+    exactly the stores it never reached.
+
+    The run_id format is fixed by build_index() -- `index-{Province}-{stamp}`
+    with spaces stripped from the province -- so a LIKE on that prefix is the
+    lookup, and sorting by run_id sorts by time.
+    """
+    prefix = f"index-{province.replace(' ', '')}-"
+    cur = conn.execute(
+        """
+        SELECT run_id, COUNT(DISTINCT store_id), MAX(scraped_at)
+        FROM observations
+        WHERE run_id LIKE ? AND status = 'ok'
+        GROUP BY run_id
+        ORDER BY run_id DESC
+        LIMIT ?
+        """,
+        (prefix + "%", limit),
+    )
+    return [{"run_id": r[0], "stores": r[1], "at": r[2]}
+            for r in cur.fetchall()]
 
 
 def indexed_store_ids(conn: sqlite3.Connection,

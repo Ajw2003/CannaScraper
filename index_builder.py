@@ -189,6 +189,90 @@ def _close_out(conn, store_id: str, seen_skus: set, now: str,
     return out
 
 
+def _eta_min(t0: float, done: int, total: int) -> float | None:
+    """Minutes left, from the rate achieved so far. None until one store lands."""
+    if done <= 0:
+        return None
+    return (time.time() - t0) / done * (total - done) / 60
+
+
+def build_index(province: str, *, limit: int | None = None,
+                resume: str | None = None, db_path: str | None = None,
+                on_progress=None, should_stop=None) -> dict:
+    """Index every store in a province. The CLI and the web UI both call this.
+
+    `on_progress(event)` receives a dict per milestone. `phase` is one of:
+      begin   -- run_id and store count are known, nothing fetched yet
+      store   -- about to fetch this store (it takes ~29s, so the UI needs
+                 the name up front rather than after the fact)
+      stored  -- this store landed; carries rows/instock/closed
+      failed  -- this store raised; carries error
+
+    `should_stop()` is polled once per store. A store's paged fetch is not
+    interruptible mid-flight, so a cancel takes effect at the next store
+    boundary -- up to ~29s. Say that in the UI rather than implying it is
+    instant.
+
+    Raises ValueError if the province matches no stores.
+    """
+    run_id = resume or (
+        f"index-{province.replace(' ', '')}-"
+        f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
+
+    store_list = S.get_stores(province=province, limit=limit)
+    if not store_list:
+        raise ValueError(f"No stores for province={province!r}")
+
+    conn = db.connect(db_path)
+    try:
+        already = db.done_store_ids(conn, run_id) if resume else set()
+        todo = [s for s in store_list if s["store_id"] not in already]
+
+        def emit(**kw):
+            if on_progress:
+                on_progress({"run_id": run_id, "province": province,
+                             "total": len(todo), "resumed": len(already), **kw})
+
+        emit(phase="begin", done=0, store="", city="",
+             eta_min=len(todo) * 25 * 60 / config.API_RATE_PER_MIN / 60)
+
+        pacer = _Pacer(config.API_RATE_PER_MIN)
+        t0 = time.time()
+        rows_total = failed = completed = 0
+        cancelled = False
+
+        for i, st in enumerate(todo, 1):
+            if should_stop and should_stop():
+                cancelled = True
+                break
+            emit(phase="store", done=i - 1, store=st["name"],
+                 city=st.get("city", ""), eta_min=_eta_min(t0, i - 1, len(todo)))
+            try:
+                rows = index_store(pacer, st, province)
+                now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                closed = _close_out(conn, st["store_id"],
+                                    {r["sku"] for r in rows}, now, st)
+                db.write_rows(conn, run_id, rows + closed)
+                rows_total += len(rows)
+                completed += 1
+                emit(phase="stored", done=i, store=st["name"],
+                     city=st.get("city", ""), rows=len(rows),
+                     instock=sum(1 for r in rows if r["available"]),
+                     closed=len(closed), eta_min=_eta_min(t0, i, len(todo)))
+            except Exception as e:                                # noqa: BLE001
+                failed += 1
+                emit(phase="failed", done=i, store=st["name"],
+                     city=st.get("city", ""),
+                     error=f"{type(e).__name__}: {str(e)[:60]}",
+                     eta_min=_eta_min(t0, i, len(todo)))
+
+        return {"run_id": run_id, "province": province, "rows": rows_total,
+                "stores": len(todo), "completed": completed, "failed": failed,
+                "cancelled": cancelled, "minutes": (time.time() - t0) / 60}
+    finally:
+        conn.close()
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Build a province-wide stock index")
     ap.add_argument("--province", default=config.PROVINCE)
@@ -198,61 +282,42 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=config.DB_PATH)
     args = ap.parse_args(argv)
 
-    run_id = args.resume or (
-        f"index-{args.province.replace(' ', '')}-"
-        f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
+    def report(ev: dict) -> None:
+        phase = ev["phase"]
+        if phase == "begin":
+            print("=" * 74)
+            print(f"Stock index — {ev['province']}   run {ev['run_id']}")
+            print("=" * 74)
+            if ev["resumed"]:
+                print(f"Resuming: {ev['resumed']} store(s) already indexed.")
+            print(f"Stores: {ev['total']} to index   (~{ev['eta_min']:.0f} min)")
+            print()
+        elif phase == "stored":
+            closed = f", {ev['closed']} closed out" if ev["closed"] else ""
+            eta = ev["eta_min"]
+            eta_s = f"   ETA {eta:.0f}m" if eta is not None else ""
+            print(f"[{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
+                  f"{ev['city'][:14]:<14} {ev['rows']:>5} products, "
+                  f"{ev['instock']:>5} in stock{closed}{eta_s}")
+        elif phase == "failed":
+            print(f"[{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
+                  f"FAILED {ev['error']}")
 
-    store_list = S.get_stores(province=args.province, limit=args.limit)
-    if not store_list:
-        print(f"No stores for province={args.province!r}")
+    try:
+        res = build_index(args.province, limit=args.limit, resume=args.resume,
+                          db_path=args.db, on_progress=report)
+    except ValueError as e:
+        print(e)
         return 2
 
-    conn = db.connect(args.db)
-    done = db.done_store_ids(conn, run_id) if args.resume else set()
-    todo = [s for s in store_list if s["store_id"] not in done]
-
+    print()
     print("=" * 74)
-    print(f"Stock index — {args.province}   run {run_id}")
-    print("=" * 74)
-    if done:
-        print(f"Resuming: {len(done)} store(s) already indexed.")
-    print(f"Stores: {len(todo)} to index"
-          f"   (~{len(todo) * 25 * 60 / config.API_RATE_PER_MIN / 60:.0f} min)\n")
-
-    pacer = _Pacer(config.API_RATE_PER_MIN)
-    t0 = time.time()
-    total = failed = 0
-
-    for i, st in enumerate(todo, 1):
-        try:
-            rows = index_store(pacer, st, args.province)
-            closed = _close_out(conn, st["store_id"],
-                                {r["sku"] for r in rows},
-                                datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                                st)
-            db.write_rows(conn, run_id, rows + closed)
-            total += len(rows)
-            instock = sum(1 for r in rows if r["available"])
-            done_n, left = i, len(todo) - i
-            eta = (time.time() - t0) / done_n * left / 60
-            print(f"[{i}/{len(todo)}] {st['name'][:26]:<26} {st['city'][:14]:<14} "
-                  f"{len(rows):>5} products, {instock:>5} in stock"
-                  f"{f', {len(closed)} closed out' if closed else ''}"
-                  f"   ETA {eta:.0f}m")
-        except Exception as e:                                # noqa: BLE001
-            failed += 1
-            print(f"[{i}/{len(todo)}] {st['name'][:26]:<26} FAILED "
-                  f"{type(e).__name__}: {str(e)[:60]}")
-
-    mins = (time.time() - t0) / 60
-    print("\n" + "=" * 74)
-    print(f"Indexed {total} store-product rows in {mins:.1f} min"
-          f"   ({failed} store(s) failed)")
-    print(f"DB: {args.db}   run_id: {run_id}")
-    if failed:
-        print(f"Retry just those:  python index_builder.py --resume {run_id}")
-    conn.close()
-    return 0 if not failed else 1
+    print(f"Indexed {res['rows']} store-product rows in {res['minutes']:.1f} min"
+          f"   ({res['failed']} store(s) failed)")
+    print(f"DB: {args.db}   run_id: {res['run_id']}")
+    if res["failed"]:
+        print(f"Retry just those:  python index_builder.py --resume {res['run_id']}")
+    return 0 if not res["failed"] else 1
 
 
 if __name__ == "__main__":

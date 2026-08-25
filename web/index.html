@@ -88,11 +88,56 @@ button:disabled{opacity:.5;cursor:default}
 .hide{display:none}
 a.src{color:var(--mut);font-size:12px;text-decoration:none}
 a.src:hover{text-decoration:underline}
+
+/* catalogue index panel */
+.panel{border:1px solid var(--line);border-radius:11px;background:var(--card);
+  margin:0 0 14px;overflow:hidden}
+.panel>summary{padding:11px 14px;cursor:pointer;display:flex;gap:9px;
+  align-items:baseline;font-weight:600;font-size:14px;list-style:none}
+.panel>summary::-webkit-details-marker{display:none}
+.panel>summary::before{content:"\25B8";color:var(--mut);font-weight:400}
+.panel[open]>summary::before{content:"\25BE"}
+.panel>summary:hover{background:var(--bg)}
+.panel>summary .muted{font-weight:400}
+.idx{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  padding:10px 14px;border-top:1px solid var(--line)}
+.idx .who{flex:1;min-width:160px}
+.idx .who b{display:block;font-size:14px}
+.idx .who span{color:var(--mut);font-size:12.5px}
+.idx .act{display:flex;gap:6px;flex:none}
+.idx .bar{flex-basis:100%;margin:0}
+.idx .prog{flex-basis:100%;color:var(--mut);font-size:12.5px;
+  font-variant-numeric:tabular-nums}
+button.small{padding:6px 11px;font-size:13px}
+.note{padding:10px 14px;border-top:1px solid var(--line);
+  color:var(--mut);font-size:12.5px}
+#unlock{padding:10px 14px;border-top:1px solid var(--line);gap:8px;
+  align-items:center}
+#unlock input{flex:1;min-width:150px;font:inherit;padding:9px 12px;
+  border:1px solid var(--line);border-radius:9px;background:var(--bg);
+  color:var(--fg)}
+a.idxlink{color:var(--accent);cursor:pointer}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Where's it in stock?</h1>
+
+  <details class="panel" id="idxpanel">
+    <summary>Catalogue index <span class="muted" id="idxsum">checking…</span></summary>
+    <div id="idxrows"></div>
+    <div class="row hide" id="unlock">
+      <input type="password" id="pw" placeholder="Admin password"
+             autocomplete="current-password">
+      <button class="primary small" id="pwgo">Unlock</button>
+      <span class="muted" id="pwmsg"></span>
+    </div>
+    <div class="note" id="idxnote">
+      A rebuild re-reads every store in the province, one at a time, to stay
+      under the site's rate limit. Searching is open to anyone with the link;
+      rebuilding needs the password.
+    </div>
+  </details>
 
   <input type="search" id="q" placeholder="Search a product…  e.g. grape gas"
          autocomplete="off" autofocus>
@@ -300,7 +345,7 @@ function status(d){
   else if (cov)
     bits.push(`<span class="low pill">partly indexed</span> ${cov} of ${checked} stores · ${age(d.index_age_hours)}`);
   else
-    bits.push(`<span class="no">not indexed yet — run index_builder, or use a live check</span>`);
+    bits.push(`<span class="no">not indexed yet — <a class="idxlink">build the index</a>, or use a live check</span>`);
 
   if (d.age_hours !== null && d.age_hours !== undefined)
     bits.push(`this product last checked ${age(d.age_hours)}`);
@@ -379,6 +424,21 @@ async function refresh(){
   $('#prog').classList.remove('hide');
   const p = params(current); p.set('fetcher', $('#src').value);
   const r = await fetch('/api/refresh?' + p, {method:'POST'});
+
+  // A live check spends the shared rate limit and sends traffic from the host
+  // machine, so it is one of the password-gated actions.
+  if (r.status === 401){
+    btn.disabled = false; btn.textContent = 'Check live now';
+    $('#prog').classList.add('hide');
+    showUnlock(() => $('#refresh').click(), 'Password needed for a live check.');
+    return;
+  }
+  if (!r.ok){
+    const e = await r.json().catch(() => ({}));
+    btn.disabled = false; btn.textContent = 'Check live now';
+    $('#progtxt').textContent = e.error || 'Could not start that check.';
+    return;
+  }
   const {job, total} = await r.json();
 
   const poll = setInterval(async () => {
@@ -393,6 +453,179 @@ async function refresh(){
     }
   }, 500);
 }
+
+// ---- what this installation can do ----------------------------------------
+let isAdmin = false;
+
+(async function caps(){
+  try{
+    const c = await (await fetch('/api/capabilities')).json();
+    isAdmin = !!c.admin;
+    // The packaged app ships without Playwright. Offering a source that
+    // cannot run is worse than not offering it.
+    if (!c.playwright){
+      const opt = $('#src').querySelector('option[value="browser"]');
+      if (opt) opt.remove();
+    }
+  }catch(e){ /* the index panel reports the outage */ }
+})();
+
+// ---- unlocking -------------------------------------------------------------
+// Reading is open to anyone with the link. Anything that makes this machine
+// talk to the site is not, so a 401 opens this rather than failing silently.
+let afterUnlock = null;
+
+function showUnlock(retry, msg){
+  afterUnlock = retry || null;
+  $('#idxpanel').open = true;
+  $('#unlock').classList.remove('hide');
+  $('#pwmsg').textContent = msg || 'Password needed for that.';
+  $('#pw').focus();
+}
+
+$('#pwgo').onclick = async () => {
+  const pw = $('#pw').value;
+  if (!pw) return;
+  $('#pwgo').disabled = true;
+  $('#pwmsg').textContent = 'Checking…';
+  let r;
+  try{
+    r = await fetch('/api/login', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({password: pw})});
+  }catch(e){
+    $('#pwgo').disabled = false;
+    $('#pwmsg').textContent = 'Could not reach the server.';
+    return;
+  }
+  $('#pwgo').disabled = false;
+  if (r.ok){
+    isAdmin = true;
+    $('#pw').value = '';
+    $('#unlock').classList.add('hide');
+    $('#pwmsg').textContent = '';
+    const go = afterUnlock; afterUnlock = null;
+    if (go) go();
+    loadIndex();
+  } else {
+    const d = await r.json().catch(() => ({}));
+    $('#pwmsg').textContent = d.error || 'Wrong password.';
+  }
+};
+$('#pw').addEventListener('keydown',
+  e => { if (e.key === 'Enter') $('#pwgo').click(); });
+
+async function post(url){
+  const r = await fetch(url, {method:'POST'});
+  if (r.status === 401){ showUnlock(() => post(url)); return null; }
+  return r;
+}
+
+// ---- catalogue index -------------------------------------------------------
+let idxTimer = null, wasBusy = false;
+
+function fmtAge(h){
+  if (h === null || h === undefined) return 'never';
+  if (h < 1) return Math.round(h * 60) + ' min ago';
+  if (h < 24) return h.toFixed(1) + ' h ago';
+  return (h / 24).toFixed(1) + ' days ago';
+}
+
+function idxRow(p){
+  const j = p.job, prov = esc(p.province);
+  const cover = p.indexed
+    ? `indexed ${p.indexed}/${p.stores} · ${fmtAge(p.age_hours)}`
+    : 'never indexed';
+  let act, prog = '';
+
+  if (j){
+    const pct = j.total ? Math.round(100 * j.done / j.total) : 0;
+    const eta = (j.eta_min === null || j.eta_min === undefined)
+      ? '' : ` · ETA ${Math.max(0, Math.round(j.eta_min))}m`;
+    const line = j.state === 'queued'
+      ? 'Queued — waiting for the current job to finish'
+      : `${j.done} of ${j.total}${j.current ? ' · ' + esc(j.current) : ''}${eta}`;
+    act = `<button class="small" data-act="cancel" data-prov="${prov}">Cancel</button>`;
+    prog = `<div class="bar"><i style="width:${pct}%"></i></div>
+            <div class="prog">${line}</div>`;
+  } else if (p.incomplete){
+    // A run that stopped early can pick up where it left off, which on
+    // Ontario is the difference between 10 minutes and 49.
+    act = `<button class="small primary" data-act="resume" data-prov="${prov}">Resume</button>
+           <button class="small" data-act="refresh" data-prov="${prov}">Rebuild</button>`;
+  } else {
+    act = `<button class="small primary" data-act="refresh" data-prov="${prov}">Refresh</button>`;
+  }
+
+  // Say why Resume is on offer. "Resume" next to "indexed 12/12" is otherwise
+  // baffling -- the coverage is from older runs, the last run stopped early.
+  const tail = j ? ''
+    : p.incomplete
+      ? ` · last run stopped at ${p.last_run_stores}/${p.stores}`
+      : ` · about ${p.estimate_min} min`;
+
+  return `<div class="idx">
+    <div class="who"><b>${prov}</b><span>${p.stores} stores · ${cover}${tail}</span></div>
+    <div class="act">${act}</div>${prog}</div>`;
+}
+
+function renderIndex(d){
+  $('#idxrows').innerHTML = d.provinces.map(idxRow).join('');
+
+  const running = d.provinces.filter(p => p.job);
+  const full = d.provinces.filter(p => p.stores && p.indexed >= p.stores).length;
+  $('#idxsum').textContent = running.length
+    ? `rebuilding ${running.map(p => p.province).join(', ')}`
+    : `${full} of ${d.provinces.length} provinces fully indexed`;
+
+  $('#idxrows').querySelectorAll('button[data-act]').forEach(b => {
+    b.onclick = async () => {
+      const prov = encodeURIComponent(b.dataset.prov), act = b.dataset.act;
+      b.disabled = true;
+      const r = act === 'cancel' ? await post(`/api/index/${prov}/cancel`)
+              : act === 'resume' ? await post(`/api/index/${prov}?resume=auto`)
+              : await post(`/api/index/${prov}`);
+      if (r && !r.ok){
+        const e = await r.json().catch(() => ({}));
+        $('#unlock').classList.remove('hide');
+        $('#pwmsg').textContent = e.error || 'That did not work.';
+      }
+      loadIndex();
+    };
+  });
+
+  // A finished build makes everything on screen stale, including the
+  // stocked-only filter and whatever product is open.
+  if (wasBusy && !d.busy){
+    loadCats();
+    rerun();
+    if (current) load(current);
+  }
+  wasBusy = d.busy;
+}
+
+async function loadIndex(){
+  clearTimeout(idxTimer);
+  try{
+    const d = await (await fetch('/api/index/status')).json();
+    renderIndex(d);
+    // Fast while something is moving, slow when nothing is.
+    idxTimer = setTimeout(loadIndex, d.busy ? 2000 : 30000);
+  }catch(e){
+    $('#idxsum').textContent = 'server unreachable';
+    idxTimer = setTimeout(loadIndex, 5000);
+  }
+}
+loadIndex();
+
+// "not indexed yet" in a result opens the panel rather than naming a script
+// the person reading it has no way to run.
+document.addEventListener('click', e => {
+  if (!e.target.closest('a.idxlink')) return;
+  e.preventDefault();
+  $('#idxpanel').open = true;
+  $('#idxpanel').scrollIntoView({behavior:'smooth', block:'start'});
+});
 </script>
 </body>
 </html>

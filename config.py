@@ -4,6 +4,8 @@ Every URL, selector, and tunable lives here. When the site changes, this is
 the only file you should need to edit.
 """
 
+import paths
+
 # --- Endpoints -------------------------------------------------------------
 BASE = "https://cannacabana.com"
 LOCATOR_URL = f"{BASE}/pages/store-locator"
@@ -23,7 +25,7 @@ MAX_STORES = None      # set to a small int while developing; None = all
 # ("Calgary, AB", "T2P 1J9") or a (lat, lng) tuple. None = must pass --near.
 HOME = "Calgary, AB"
 DEFAULT_TOP = 10       # how many nearest stores a lookup checks by default
-GEOCODE_CACHE = "geocode.json"
+GEOCODE_CACHE = paths.data("geocode.json")
 # Nominatim asks that clients identify themselves. Free, no key required.
 NOMINATIM_UA = "CannaCabanaScraper/1.0 (personal stock lookup)"
 
@@ -78,13 +80,18 @@ DELAY_RANGE = (2.0, 5.0)   # random sleep between requests, seconds
 MAX_RETRIES = 3
 
 # --- Storage ---------------------------------------------------------------
-DB_PATH = "history.db"
-CSV_PATH = "results.csv"
-RAW_DIR = "raw"
-STORES_CACHE = "stores.json"
-CATALOG_CACHE = "catalog.json"
+# Absolute, resolved by paths.py. They used to be bare filenames, which meant
+# the tool silently created an empty database whenever it was launched from
+# anywhere but this directory -- and a packaged app is never launched from
+# here. paths.seed() copies the bundled catalogue/store list into the data
+# directory on first run; in a source checkout it is a no-op.
+DB_PATH = paths.data("history.db")
+CSV_PATH = paths.data("results.csv")
+RAW_DIR = paths.data("raw")
+STORES_CACHE = paths.seed("stores.json")
+CATALOG_CACHE = paths.seed("catalog.json")
 CATALOG_MAX_AGE_H = 24
-WATCHLIST = "watchlist.txt"
+WATCHLIST = paths.seed("watchlist.txt")
 
 # --- Store / age-gate state ------------------------------------------------
 # CONFIRMED by discover.py against the live site (Step 5 of the plan).

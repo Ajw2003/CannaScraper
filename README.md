@@ -10,9 +10,26 @@ and Windows Task Scheduler. No paid APIs, no proxies, no accounts.
 
 ## Quick start
 
+**Just want to use it?** Build the app once and run that — no Python, no
+setup, and it can serve a public URL:
+
 ```bash
-python -m venv .venv && .venv\Scripts\pip install playwright beautifulsoup4 pandas && .venv\Scripts\python -m playwright install chromium
+.\build.ps1
 ```
+
+That produces `dist\CannaCabana\`. Run `CannaCabana.exe`, and it prints a
+local URL, a LAN URL, a public `trycloudflare.com` URL, and an admin password.
+Zip the folder to hand it to someone else. See **The app** below.
+
+**Working on the code?**
+
+```bash
+python -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt && .venv\Scripts\python -m playwright install chromium
+```
+
+(`requirements.txt` is the three packages the app itself needs;
+`requirements-dev.txt` adds Playwright for the browser backend and PyInstaller
+for the build. Playwright is only needed for the `--fetcher browser` path.)
 
 Then edit `watchlist.txt`, and:
 
@@ -22,6 +39,12 @@ Then edit `watchlist.txt`, and:
 
 That scrapes your watchlist at 3 Alberta stores and writes `results.csv`.
 When it looks right, drop `--limit` for the full province.
+
+Check everything still works at any time:
+
+```bash
+.venv\Scripts\python selftest.py
+```
 
 ---
 
@@ -143,21 +166,76 @@ Hat and $15.44 in Calgary. Stock availability varies far more than price.
 | `db.py` | SQLite history + CSV export |
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
+| `app.py` | The application: banner, web server, tunnel. What the exe runs |
+| `paths.py` | Where data lives — the project folder, or `%LOCALAPPDATA%` when packaged |
+| `jobs.py` | One worker thread, one queue: index builds and live checks, never at once |
+| `auth.py` | `settings.json`, the admin password, session cookies |
+| `tunnel.py` | Runs `cloudflared`, finds the public URL, dies with the app |
+| `server.py` | FastAPI routes behind the web UI |
+| `selftest.py` | 19 checks against a throwaway data dir; no network |
+| `build.ps1` | Numbered, pass/fail build into `dist\CannaCabana\` |
 
-## Web UI
+## The app
+
+`build.ps1` packages everything into `dist\CannaCabana\` — a folder you can
+zip and give to anyone with Windows. No Python, no venv, no Playwright.
+
+```
+==============================================================
+  Canna Cabana stock
+==============================================================
+  This computer :  http://127.0.0.1:8000
+  Phone / LAN   :  http://192.168.x.x:8000
+  Public        :  https://<random-words>.trycloudflare.com
+  Admin password:  2z2m-pzer-eexb    <-- write this down
+  Data          :  C:\Users\<you>\AppData\Local\CannaCabana
+--------------------------------------------------------------
+  Reading is open to anyone with the link.
+  Refreshing a province needs the password.
+```
+
+It stays in the foreground and streams job progress, because an index build
+takes between 3 and 49 minutes and that belongs where you can watch it.
+
+| Flag | Effect |
+|---|---|
+| `--no-tunnel` | Local and LAN only, no public URL |
+| `--port N` | Override the saved port |
+| `--no-browser` | Do not open a browser window on start |
+| `--set-password PW` | Change the admin password (signs out existing sessions) |
+| `--selftest` | Run the built-in checks and exit |
+
+**Public URL.** Bundled `cloudflared` opens a quick tunnel: no account, no
+domain, no port forwarding, works behind CGNAT. The hostname is random and
+changes on every start, and quick tunnels are best-effort with no SLA. For a
+link that keeps working, create a named tunnel in the Cloudflare dashboard and
+put its token in `settings.json`:
+
+```json
+{ "tunnel": "named", "tunnel_token": "eyJhIjoi..." }
+```
+
+Because the tunnel is HTTPS, the "📍 Near me" button works on phones — browsers
+refuse geolocation over plain http, so the LAN URL cannot offer it.
+
+**Who can do what.** Searching and viewing stock are open to anyone with the
+link. Anything that makes your machine talk to cannacabana.com — a live
+re-check, a province rebuild — needs the admin password. That password is
+printed once on first run and only its hash is stored; if you miss it, use
+`--set-password`.
+
+**Settings** live in `%LOCALAPPDATA%\CannaCabana\settings.json`, alongside
+`history.db` and the catalogue. Deleting that folder resets the app.
+
+### Running from source instead
 
 ```bash
-.venv\Scripts\python server.py
+.venv\Scripts\python app.py          # the same app, tunnel and all
+.venv\Scripts\python server.py       # local + LAN only, no tunnel
 ```
 
-```
-  This computer :  http://localhost:8000
-  Phone / LAN   :  http://192.168.x.x:8000
-```
-
-It binds to `0.0.0.0`, so **your phone on the same Wi-Fi can use it** — no
-hosting, no account, no cost. On mobile the "📍 Near me" button uses the
-browser's own geolocation, so there's no geocoding step at all.
+In a source checkout the data directory is the project folder, so `history.db`
+and the caches stay exactly where they always were.
 
 Type a product, pick it from the thumbnails, and get every store ranked by
 units on hand. **Check live now** re-queries the stores with a progress bar
@@ -212,6 +290,18 @@ re-hosted. Two reasons it's free:
 > rights are worth settling alongside the data question.
 
 ## The stock index
+
+Easiest way: open the app and use the **Catalogue index** panel at the top of
+the page. Each province shows its coverage and how old it is, with a Refresh
+button, live progress, a Cancel button, and Resume when a previous run stopped
+early. Because the state lives on the server, a build you start on the desktop
+is visible from your phone.
+
+Only one build runs at a time — the site's rate limit is a single global
+budget, so a second concurrent build would produce 429s rather than finish any
+faster. Cancel takes effect at the next store boundary, up to ~29 seconds.
+
+The command line does the same thing and is what a scheduled task should call:
 
 ```bash
 .venv\Scripts\python index_builder.py                    REM Alberta, ~45 min

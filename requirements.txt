@@ -1,0 +1,16 @@
+# What the packaged app needs, and nothing else.
+#
+# The scraper core is stdlib: urllib, json, sqlite3, math, re, asyncio.
+# stores.py, catalog.py, index_builder.py, db.py and the API fetcher have no
+# third-party imports at all. These three are the web layer.
+#
+# Deliberately absent:
+#   playwright      only the "Live: real browser" source needs it, and that is
+#                   ~350 MB with its Chromium. See requirements-dev.txt.
+#   pandas / numpy  was one read_sql_query in db.export_csv; now stdlib csv.
+#   beautifulsoup4  installed historically, never imported.
+#   python-dotenv   installed historically, never imported.
+
+fastapi==0.141.1
+uvicorn==0.52.3
+pydantic==2.13.4
