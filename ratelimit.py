@@ -29,8 +29,21 @@ _lock = threading.Lock()
 _run: dict = {}
 
 
+# A 429 that arrives with plenty of budget left is not the budget refusing us.
+# Store 528 has produced two of those; it also produces HTTP 500s, and has
+# never once succeeded on this endpoint. Counting those as rate limiting would
+# report pressure that does not exist.
+BUDGET_FLOOR = 5
+
+
 def _blank() -> dict:
-    return {"samples": 0, "min_remaining": None, "limit": None, "throttled": 0}
+    return {"samples": 0, "min_remaining": None, "limit": None,
+            # Real budget exhaustion: 429 with the allowance spent.
+            "throttled": 0,
+            # 429 with budget to spare -- a specific store or endpoint
+            # refusing, not us being too fast.
+            "refused_other": 0,
+            "refused_by_store": {}}
 
 
 _run = _blank()
@@ -65,11 +78,34 @@ def start_run() -> None:
         _run.update(_blank())
 
 
-def observe(headers, status: int = 200) -> None:
+def classify_429(headers) -> bool:
+    """Is this 429 the budget refusing us, or something else?
+
+    True means genuine rate limiting -- the allowance is spent, so backing off
+    and waiting for the window is the right response. False means we were
+    refused while holding plenty of budget, which is a property of whatever we
+    asked rather than of how fast we asked it, and waiting will not help.
+    """
+    remaining = _pick(headers, "X-RateLimit-Remaining")
+    if remaining is None:
+        return True                       # no evidence; assume the cautious case
+    try:
+        return int(remaining) <= BUDGET_FLOOR
+    except (TypeError, ValueError):
+        return True
+
+
+def observe(headers, status: int = 200, store_id: str | None = None) -> None:
     """Fold one response's headers into the current run."""
     with _lock:
         if status == 429:
-            _run["throttled"] += 1
+            if classify_429(headers):
+                _run["throttled"] += 1
+            else:
+                _run["refused_other"] += 1
+                if store_id:
+                    by = _run["refused_by_store"]
+                    by[str(store_id)] = by.get(str(store_id), 0) + 1
 
         limit = _pick(headers, "X-RateLimit-Limit")
         if limit is not None:
@@ -107,7 +143,11 @@ def summarize() -> str:
         head += f" of {limit}"
     head += f" at the tightest point over {s['samples']} calls"
     if s["throttled"]:
-        head += f", {s['throttled']} throttled (429)"
+        head += f", {s['throttled']} genuinely throttled (429, budget spent)"
+    if s["refused_other"]:
+        who = ", ".join(f"store {k}" for k in sorted(s["refused_by_store"]))
+        head += (f", {s['refused_other']} 429 with budget to spare"
+                 + (f" ({who})" if who else "") + " - not rate limiting")
     return head
 
 
@@ -132,8 +172,13 @@ def record(kind: str) -> dict:
     history = _load()
     entry = history.setdefault(kind, {"lowest_remaining": None, "runs": 0,
                                       "throttled": 0, "limit": None})
+    entry.setdefault("refused_other", 0)
+    entry.setdefault("refused_by_store", {})
     entry["runs"] += 1
     entry["throttled"] += s["throttled"]
+    entry["refused_other"] += s["refused_other"]
+    for sid, n in s["refused_by_store"].items():
+        entry["refused_by_store"][sid] = entry["refused_by_store"].get(sid, 0) + n
     entry["limit"] = s["limit"] or entry.get("limit")
     low = s["min_remaining"]
     if low is not None and (entry["lowest_remaining"] is None

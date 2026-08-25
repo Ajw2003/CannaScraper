@@ -198,6 +198,17 @@ async def run(args: argparse.Namespace) -> int:
         print(f"\nResuming: {len(skip)} store(s) already complete, skipping them.")
 
     todo = [s for s in store_list if s["store_id"] not in skip]
+
+    # Stores the scan endpoint will not serve. Skipped here rather than failed
+    # slowly: store 528 alone costs 90s of retry backoff per run.
+    if (args.fetcher or config.FETCHER) == "api":
+        todo, unscannable = fetchers.partition_scannable(
+            todo, db.last_scan_attempt(conn, [s["store_id"] for s in todo]))
+        for s in unscannable:
+            print(f"Skipping   {s['name']} ({s['store_id']}) — known bad on "
+                  f"the scan endpoint; retried every "
+                  f"{config.SCAN_SKIP_RETRY_DAYS} days")
+
     print(f"\nProvince : {args.province}")
     print(f"Stores   : {len(todo)} to scrape ({len(store_list)} in scope)")
     print(f"Products : {len(targets)} variant(s)")

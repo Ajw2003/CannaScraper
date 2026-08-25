@@ -101,13 +101,22 @@ class ApiFetcher:
                     {"skus": skus},
                 )
             # Free telemetry: the budget headers ride on every response.
-            ratelimit.observe(headers, status)
+            ratelimit.observe(headers, status, store_id)
 
             if status == 200 and isinstance(body, dict) and body.get("success"):
                 return body
 
             if status == 429:
-                # Respect the server's own backoff hint when it gives one.
+                if not ratelimit.classify_429(headers):
+                    # Refused while holding plenty of budget, so this is not
+                    # about how fast we asked and waiting will not fix it.
+                    # Store 528 burned 15+30+45s per run on exactly this.
+                    last = "429 with budget to spare (store-specific, not rate limiting)"
+                    if attempt >= 2:
+                        break
+                    await asyncio.sleep(2.0)
+                    continue
+                # Genuine budget exhaustion: respect the server's own hint.
                 delay = float(headers.get("Retry-After") or 0) or 15.0 * attempt
                 last = f"429 rate limited (waited {delay:.0f}s)"
                 await asyncio.sleep(delay)

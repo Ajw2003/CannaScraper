@@ -275,6 +275,61 @@ def index_coverage(conn: sqlite3.Connection,
     return n, age
 
 
+def last_scan_attempt(conn: sqlite3.Connection,
+                      store_ids: list[str] | None = None) -> dict[str, str]:
+    """When we last *attempted* each store on the scan endpoint.
+
+    Index runs are excluded deliberately: they use product/search, which is a
+    different endpoint with different failure modes -- store 528 answers it
+    fine while refusing every scan call. Mixing them would make a broken store
+    look healthy.
+
+    Errors count as attempts, which is the point: a failed re-test pushes the
+    timestamp forward and so restarts the skip clock.
+    """
+    sql = ("SELECT store_id, MAX(scraped_at) FROM observations "
+           "WHERE run_id NOT LIKE 'index-%'")
+    params: list = []
+    if store_ids:
+        sql += f" AND store_id IN ({','.join('?' * len(store_ids))})"
+        params = [str(s) for s in store_ids]
+    sql += " GROUP BY store_id"
+    return {row[0]: row[1] for row in conn.execute(sql, params) if row[1]}
+
+
+def scan_failure_streaks(conn: sqlite3.Connection,
+                         window: int = 5) -> list[dict]:
+    """Stores whose recent scan attempts all failed -- skip-list candidates.
+
+    Read-only. This is how the next store 528 gets found from evidence rather
+    than from someone noticing a run felt slow.
+    """
+    cur = conn.execute(
+        """
+        SELECT store_id, store_name, city, status, error, scraped_at
+        FROM observations
+        WHERE run_id NOT LIKE 'index-%'
+        ORDER BY store_id, scraped_at DESC
+        """
+    )
+    seen: dict[str, list] = {}
+    for sid, name, city, status, error, when in cur:
+        rows = seen.setdefault(sid, [])
+        if len(rows) < window:
+            rows.append((name, city, status, error, when))
+
+    out = []
+    for sid, rows in seen.items():
+        if len(rows) < 2 or any(r[2] == "ok" for r in rows):
+            continue
+        name, city = rows[0][0], rows[0][1]
+        out.append({"store_id": sid, "name": name, "city": city,
+                    "failures": len(rows), "last_seen": rows[0][4],
+                    "error": rows[0][3] or ""})
+    out.sort(key=lambda r: -r["failures"])
+    return out
+
+
 def index_runs(conn: sqlite3.Connection, province: str,
                limit: int = 5) -> list[dict]:
     """Recent index runs for one province, newest first.

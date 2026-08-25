@@ -286,6 +286,47 @@ def build_index(province: str, *, limit: int | None = None,
         conn.close()
 
 
+def _report_broken(db_path: str) -> int:
+    """Which stores the scan endpoint keeps refusing.
+
+    Read-only. The skip list should be maintained from this rather than from
+    someone noticing a run felt slow -- that is how store 528 went unnoticed
+    for weeks while costing 90s of backoff per run.
+    """
+    import fetchers
+
+    conn = db.connect(db_path)
+    try:
+        broken = db.scan_failure_streaks(conn)
+    finally:
+        conn.close()
+
+    already = fetchers.scan_skip_ids()
+    print("=" * 74)
+    print("Stores whose recent scan attempts all failed")
+    print("=" * 74)
+    if not broken:
+        print("None. Every store has succeeded at least once recently.")
+        return 0
+
+    print(f"{'store':<7} {'name':<26} {'city':<16} {'fails':>5}  status")
+    for b in broken:
+        mark = "skipped" if b["store_id"] in already else "NOT SKIPPED"
+        print(f"{b['store_id']:<7} {b['name'][:26]:<26} {b['city'][:16]:<16} "
+              f"{b['failures']:>5}  {mark}")
+        if b["error"]:
+            print(f"        last error: {b['error'][:60]}")
+
+    missing = [b for b in broken if b["store_id"] not in already]
+    if missing:
+        ids = ", ".join(f'"{b["store_id"]}"' for b in missing)
+        print()
+        print("To skip these on the live-check path, add to config.py:")
+        print(f"    SCAN_SKIP_STORES = {{{ids}}}")
+        print("or add them to scan_skip_stores in settings.json.")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Build a province-wide stock index")
     ap.add_argument("--province", default=config.PROVINCE)
@@ -293,7 +334,13 @@ def main(argv=None) -> int:
                     help="only index the first N stores (try 5 first)")
     ap.add_argument("--resume", metavar="RUN_ID", default=None)
     ap.add_argument("--db", default=config.DB_PATH)
+    ap.add_argument("--broken-stores", action="store_true",
+                    help="list stores whose recent scan attempts all failed, "
+                         "then exit (skip-list candidates)")
     args = ap.parse_args(argv)
+
+    if args.broken_stores:
+        return _report_broken(args.db)
 
     def report(ev: dict) -> None:
         phase = ev["phase"]

@@ -1,0 +1,139 @@
+{
+  "started": "2026-08-25T06:02:11.921043+00:00",
+  "store_id": "3154",
+  "advertised_limit": 60,
+  "phases": {
+    "A_unit_cost": {
+      "samples": 8,
+      "drops": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "median_drop": 1,
+      "note": "delta in remaining between consecutive isolated calls"
+    },
+    "B_window": {
+      "after_burst": "50",
+      "recovery": [
+        [
+          5,
+          "49"
+        ],
+        [
+          10,
+          "48"
+        ],
+        [
+          15,
+          "47"
+        ],
+        [
+          20,
+          "46"
+        ],
+        [
+          25,
+          "45"
+        ],
+        [
+          30,
+          "44"
+        ],
+        [
+          35,
+          "43"
+        ],
+        [
+          40,
+          "42"
+        ],
+        [
+          45,
+          "41"
+        ],
+        [
+          50,
+          "59"
+        ],
+        [
+          55,
+          "58"
+        ],
+        [
+          60,
+          "57"
+        ],
+        [
+          65,
+          "56"
+        ],
+        [
+          70,
+          "55"
+        ],
+        [
+          75,
+          "54"
+        ],
+        [
+          80,
+          "53"
+        ],
+        [
+          85,
+          "52"
+        ],
+        [
+          90,
+          "51"
+        ],
+        [
+          95,
+          "50"
+        ],
+        [
+          100,
+          "49"
+        ],
+        [
+          105,
+          "59"
+        ],
+        [
+          110,
+          "58"
+        ],
+        [
+          115,
+          "57"
+        ],
+        [
+          120,
+          "56"
+        ]
+      ],
+      "note": "a step back to full = fixed window; a climb = rolling"
+    },
+    "D_sharing": {
+      "search_before": "58",
+      "search_after": "47",
+      "scan_before": "59",
+      "scan_after": "46",
+      "note": "if the scan figure fell too, the budget is shared"
+    },
+    "C_ceiling": {
+      "first_429": {
+        "rate": 70,
+        "at_request": 61,
+        "remaining": "0",
+        "retry_after": "9"
+      }
+    }
+  },
+  "outcome": "refused - ceiling found",
+  "requests_sent": 297,
+  "minutes": 17.1
+}

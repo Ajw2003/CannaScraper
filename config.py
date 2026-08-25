@@ -89,6 +89,26 @@ API_CONCURRENCY = 6
 API_MAX_RETRIES = 3
 API_TIMEOUT_S = 30
 
+# Stores the scan endpoint will not serve.
+#
+# NOT a general block-list. These stores index perfectly well via
+# product/search -- 528 has 827 clean rows from it -- so they stay in the
+# registry and in the province counts. Only the per-SKU live check skips them.
+#
+# 528 (Gateway Village, St. Albert) has failed every scan attempt since
+# 2026-08-17: 15x HTTP 500 and 2x 429, and it is the ONLY store that has ever
+# produced an API error in 295k rows. Each 429 there costs 90s of backoff for
+# a store that will not answer.
+#
+# A packaged copy can add its own without a rebuild, via a "scan_skip_stores"
+# list in settings.json; the two are merged at runtime.
+SCAN_SKIP_STORES = {"528"}
+
+# Re-test a skipped store this often, so a store that gets fixed comes back on
+# its own instead of staying dead until someone remembers to check. A failed
+# re-test writes an error row, which resets the clock.
+SCAN_SKIP_RETRY_DAYS = 7
+
 # Measured wall-clock per store for a live check at the concurrency above.
 # Used only to put an honest "this will take N minutes" on the button before
 # someone starts a 100-store sweep. Re-measure if the endpoint's latency

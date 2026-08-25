@@ -366,12 +366,30 @@ def api_refresh(sku: str, lat: float | None = None, lng: float | None = None,
     prov = province or config.PROVINCE
     title = targets[0]["title"][:40]
 
+    # Stores the scan endpoint refuses to serve are dropped before the job is
+    # created, so `total` counts only what we will actually contact -- and a
+    # known-bad store does not cost 90s of backoff per run.
+    conn = db.connect()
+    try:
+        last = db.last_scan_attempt(conn, [s["store_id"] for s in store_list])
+    finally:
+        conn.close()
+    store_list, skipped = fetchers.partition_scannable(store_list, last)
+
+    if not store_list:
+        return JSONResponse(
+            {"error": "every store in scope is on the scan skip list"},
+            status_code=409)
+
     def make(job):
         return _run_refresh(job, store_list, targets, prov, fetcher)
 
     job = jobs.submit_live(f"Live check: {title} ({len(store_list)} stores)",
-                           len(store_list), make, sku=sku, province=prov)
-    return {"job": job["id"], "total": len(store_list)}
+                           len(store_list), make, sku=sku, province=prov,
+                           skipped=[{"store_id": s["store_id"],
+                                     "name": s["name"]} for s in skipped])
+    return {"job": job["id"], "total": len(store_list),
+            "skipped": [s["name"] for s in skipped]}
 
 
 async def _run_refresh(job: dict, store_list: list[dict], targets: list[dict],
@@ -394,7 +412,14 @@ async def _run_refresh(job: dict, store_list: list[dict], targets: list[dict],
     title = targets[0].get("title", "")[:40]
 
     ratelimit.start_run()
-    jobs.echo(f"  [live] {title}: {len(store_list)} stores")
+    skipped = job.get("skipped") or []
+    note = ""
+    if skipped:
+        note = (f", {len(skipped)} skipped ("
+                + ", ".join(s["name"] for s in skipped[:3])
+                + (" ..." if len(skipped) > 3 else "")
+                + " - known bad on this endpoint)")
+    jobs.echo(f"  [live] {title}: {len(store_list)} stores{note}")
     try:
         async with fetchers.get_fetcher(fetcher) as f:
             async def one(st: dict) -> None:
@@ -471,7 +496,7 @@ def _brief(job: dict) -> dict:
     return {k: job.get(k) for k in
             ("id", "kind", "label", "state", "province", "sku", "run_id",
              "total", "done", "current", "eta_min", "rows", "failed_stores",
-             "resumed", "error", "started", "finished")}
+             "resumed", "skipped", "error", "started", "finished")}
 
 
 # --- the index panel -------------------------------------------------------
