@@ -149,7 +149,24 @@ if ($running -and -not $StopRunning) {
     Write-Host ("      " + (" " * 40)) -NoNewline
     Step-Fail "output folder is in use"
 }
-if ($running) { $running | Stop-Process -Force }
+$consoleHosts = @()
+if ($running) {
+    # Capture the launcher before killing the app. Closing a console app does
+    # not close the window it was launched into, and that window's working
+    # directory is this folder -- which keeps it locked even though no file is
+    # open. Restart Manager does not report that, so it has to be found here.
+    foreach ($p in $running) {
+        $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)").ParentProcessId
+        if ($parent) {
+            $pp = Get-CimInstance Win32_Process -Filter "ProcessId=$parent" -ErrorAction SilentlyContinue
+            if ($pp -and $pp.Name -in @("WindowsTerminal.exe", "cmd.exe",
+                                        "powershell.exe", "pwsh.exe", "conhost.exe")) {
+                $consoleHosts += $pp
+            }
+        }
+    }
+    $running | Stop-Process -Force
+}
 
 # Windows releases handles a moment after the holder lets go, and
 # PyInstaller's first act is to rmdir this folder. Clear it here, with
@@ -160,6 +177,21 @@ if (Test-Path $target) {
     foreach ($try in 1..20) {
         try { Remove-Item -Recurse -Force $target -ErrorAction Stop; $freed = $true; break }
         catch { Start-Sleep -Milliseconds 500 }
+    }
+    # Still stuck: the window the app was launched into is the usual reason.
+    if (-not $freed -and $consoleHosts.Count -gt 0) {
+        foreach ($ch in $consoleHosts) {
+            Write-Host ""
+            Write-Host "      closing the console it was launched from ($($ch.Name), pid $($ch.ProcessId))"
+            try { Stop-Process -Id $ch.ProcessId -Force -ErrorAction Stop } catch { }
+        }
+        foreach ($try in 1..20) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Test-Path $target)) { $freed = $true; break }
+            try { Remove-Item -Recurse -Force $target -ErrorAction Stop; $freed = $true; break }
+            catch { }
+        }
+        Write-Host ("      " + (" " * 40)) -NoNewline
     }
 }
 if (-not $freed) {

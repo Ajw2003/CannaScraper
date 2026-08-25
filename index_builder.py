@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 
 import config
 import db
+import ratelimit
 import stores as S
 
 SEARCH = config.API_BASE + "/product/search"
@@ -76,8 +77,10 @@ def _get(pacer: _Pacer, term: str, store_id: str, page: int,
     try:
         with urllib.request.urlopen(req, timeout=config.API_TIMEOUT_S * 3) as r:
             body = r.read().decode()
+            ratelimit.observe(r.headers)
     except urllib.error.HTTPError as e:
         if e.code == 429:
+            ratelimit.observe(e.headers, 429)
             time.sleep(20)
             return _get(pacer, term, store_id, page, province)
         return None
@@ -230,6 +233,7 @@ def build_index(province: str, *, limit: int | None = None,
     if not store_list:
         raise ValueError(f"No stores for province={province!r}")
 
+    ratelimit.start_run()
     conn = db.connect(db_path)
     try:
         already = db.done_store_ids(conn, run_id) if resume else set()
@@ -275,7 +279,9 @@ def build_index(province: str, *, limit: int | None = None,
 
         return {"run_id": run_id, "province": province, "rows": rows_total,
                 "stores": len(todo), "completed": completed, "failed": failed,
-                "cancelled": cancelled, "minutes": (time.time() - t0) / 60}
+                "cancelled": cancelled, "minutes": (time.time() - t0) / 60,
+                "rate": ratelimit.summarize(),
+                "rate_history": ratelimit.record("index")}
     finally:
         conn.close()
 
@@ -327,6 +333,15 @@ def main(argv=None) -> int:
     print(f"Indexed {res['rows']} store-product rows in {res['minutes']:.1f} min"
           f"   ({res['failed']} store(s) failed)")
     print(f"DB: {args.db}   run_id: {res['run_id']}")
+    if res["rate"]:
+        print(res["rate"])
+        hist = res["rate_history"]
+        if hist and hist.get("runs", 0) > 1:
+            print(f"Across {hist['runs']} runs the closest we have come is "
+                  f"{hist['lowest_remaining']} left"
+                  + (f" of {hist['limit']}" if hist.get("limit") else "")
+                  + (f", {hist['throttled']} throttled in total"
+                     if hist.get("throttled") else ", never throttled"))
     if res["failed"]:
         print(f"Retry just those:  python index_builder.py --resume {res['run_id']}")
     return 0 if not res["failed"] else 1

@@ -48,6 +48,7 @@ hiddenimports = [
     "jobs",
     "auth",
     "paths",
+    "ratelimit",
 ]
 
 excludes = [

@@ -417,21 +417,62 @@ Nightly index for breadth, `--refresh` for the one product in hand.
 
 | | Browser | **API** (default) |
 |---|---|---|
-| 10 nearest stores, 1 product | ~85 s | **~10 s** |
-| 92 stores, 1 product | ~18 min | **~2 min** |
-| 92 stores, 5 products | ~60 min | **~3.6 min** |
+| 10 nearest stores, 1 product | ~85 s | **~22 s** |
+| 92 stores, 1 product | ~18 min | **~3.4 min** |
+| 92 stores, 5 products | ~60 min | **~3.4 min** |
 
 The API backend calls the same endpoint the site's own page uses, and **one
 call carries the whole watchlist for a store** — so cost scales with the number
-of stores, not stores × products. That's why five products cost barely more
-than one.
+of stores, not stores × products. That's why five products cost the same as one.
 
 **No credentials are used.** The endpoint answers unauthenticated; the site
 mints a token but never attaches it to this call, so neither do we.
 
-It is rate-limited (`X-RateLimit-Limit: 60`/min, and it 429s on short bursts),
-so requests are paced sequentially at 50/min with headroom. Raising
-`config.API_RATE_PER_MIN` will get you 429s, not speed.
+**On pacing.** The endpoint advertises `X-RateLimit-Limit: 60`/min and 429s on
+short bursts, so `API_RATE_PER_MIN = 50` caps how fast we may *start* requests.
+
+Concurrency is a separate question, and the answer changed. This backend ran
+strictly sequentially on the reasoning that at ~0.7 s latency the rate limit
+binds and parallelism buys nothing. `scan-multiple-items` now answers in ~10 s,
+so sequential calls spend the whole minute waiting and use 6 of the 60 requests
+allowed. Measured over 8 stores:
+
+| concurrency | wall clock | per store | requests/min | 429s |
+|---|---|---|---|---|
+| 1 | 79.8 s | 9.97 s | 6 | 0 |
+| **6** | **17.3 s** | **2.16 s** | **28** | **0** |
+
+`X-RateLimit-Remaining` never fell below 54 in either trial, so `API_CONCURRENCY`
+is 6 — roughly half the allowance, with the pacer still capping the start rate.
+
+This applies only to the live check. `index_builder.py` uses `product/search`,
+which answers in **0.74 s** — under the 1.2 s pacer interval, so that endpoint
+genuinely is rate-limit-bound and keeps its own sequential pacer. Concurrency
+there would not raise throughput, only the odds of a 429. A larger page size
+would be the real win, but anything above `limit=50` returns an empty set.
+
+### Measured headroom
+
+Every response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`, and
+`ratelimit.py` records the low-water mark per run — no extra requests, just
+reading headers we already receive. It prints at the end of an index or live
+check, and the index panel shows the running picture:
+
+```
+[live]  rate limit: got within 52 of 60 at the tightest point over 8 calls
+[index] rate limit: got within 14 of 60 at the tightest point over 38 calls
+```
+
+That gap is the whole story. A live check barely touches the budget, which is
+why concurrency was free there. An index run at 50/min gets down to **14 of 60
+remaining** — so the pacer is not being cautious for the sake of it, and
+raising `API_RATE_PER_MIN` really would start drawing 429s.
+
+Treat the number as "how close we were seen to get", not an exact count: the
+counter does not decrement one per request (observed drops ranged from under 1
+to about 3), so the window is probably rolling and the budget probably shared
+between the two endpoints. History accumulates in `ratelimit.json` in the data
+directory.
 
 Switch back any time with `--fetcher browser` or `config.FETCHER`.
 
@@ -484,7 +525,11 @@ IN STOCK — 7 store(s):
 
 Sorted by units on hand, so the top row is where it's most likely to still be
 there when you arrive. One product across all 92 Alberta stores takes about
-**12 minutes**; add `--limit 10` to sample quickly first.
+**3.5 minutes** via the web UI; add `--limit 10` to sample quickly first.
+
+(The CLI sweep in `main.py` still walks stores one at a time, so it takes
+longer — roughly 15 minutes for the same 92 stores. Only the web UI's live
+check was changed to issue them concurrently.)
 
 `--product` accepts a SKU, handle, product URL, or title text, and can be
 repeated. It overrides `watchlist.txt` for that run without editing anything.
@@ -498,13 +543,16 @@ repeated. It overrides `watchlist.txt` for that run without editing anything.
 .venv\Scripts\python main.py --product 203012 --all --province Ontario
 ```
 
+One product across a whole province, via the web UI's live check (measured at
+~2.2 s per store; the CLI's sequential sweep is roughly 4.5× these figures):
+
 | Province | Stores | Time (API) |
 |---|---|---|
-| Alberta (default) | 92 | ~2 min |
-| Ontario | 100 | ~2.2 min |
-| Saskatchewan | 13 | ~20 s |
-| Manitoba | 12 | ~20 s |
-| British Columbia | 8 | ~12 s |
+| Alberta (default) | 92 | ~3.4 min |
+| Ontario | 100 | ~3.7 min |
+| Saskatchewan | 13 | ~30 s |
+| Manitoba | 12 | ~26 s |
+| British Columbia | 8 | ~18 s |
 
 `find.bat` also takes arguments, so you can skip the prompts:
 

@@ -33,6 +33,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 import config
+import ratelimit
 import scrape          # reuse _parse_scan / _cannabinoids -- one decoder only
 
 
@@ -99,6 +100,8 @@ class ApiFetcher:
                     config.API_SCAN.format(store_id=store_id),
                     {"skus": skus},
                 )
+            # Free telemetry: the budget headers ride on every response.
+            ratelimit.observe(headers, status)
 
             if status == 200 and isinstance(body, dict) and body.get("success"):
                 return body

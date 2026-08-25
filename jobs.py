@@ -99,6 +99,8 @@ def _new(kind: str, label: str, total: int, **meta) -> dict:
         "run_id": None,
         "province": None,
         "sku": None,
+        # Stores an index run skipped because a previous attempt did them.
+        "resumed": 0,
         "error": None,
         "queued_at": time.time(),
         "started": None,
@@ -179,8 +181,13 @@ def _index_body(job: dict, province: str, resume: str | None,
                 job["error"] = f"{ev['store']}: {ev['error']}"
 
         if phase == "begin":
-            echo(f"  [index] {province}: {ev['total']} stores, "
-                 f"~{ev['eta_min']:.0f} min   run {ev['run_id']}")
+            with _lock:
+                job["resumed"] = ev["resumed"]
+            how = (f"resuming, {ev['resumed']} store(s) already done, "
+                   f"{ev['total']} left" if ev["resumed"]
+                   else f"{ev['total']} stores")
+            echo(f"  [index] {province}: {how}, ~{ev['eta_min']:.0f} min   "
+                 f"run {ev['run_id']}")
         elif phase == "stored":
             # Not "N products, N in stock": the search endpoint returns
             # in-stock items only, so those were always the same number.
@@ -213,6 +220,8 @@ def _index_body(job: dict, province: str, resume: str | None,
     tail = f", {res['failed']} failed" if res["failed"] else ""
     echo(f"  [index] {province} {verb} {res['completed']}/{res['stores']} stores, "
          f"{res['rows']} rows, {res['minutes']:.1f} min{tail}")
+    if res.get("rate"):
+        echo(f"  [index] {res['rate']}")
 
     if index_finished_hook:
         try:

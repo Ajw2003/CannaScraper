@@ -136,6 +136,7 @@ a.idxlink{color:var(--accent);cursor:pointer}
       A rebuild re-reads every store in the province, one at a time, to stay
       under the site's rate limit. Searching is open to anyone with the link;
       rebuilding needs the password.
+      <div id="ratenote" style="margin-top:6px"></div>
     </div>
   </details>
 
@@ -394,7 +395,8 @@ function render(d){
     </div>
     <div class="row" style="margin-bottom:12px">
       <button class="primary" id="refresh">${
-        $('#src').value === 'index' ? 'Reload from index' : 'Check live now'}</button>
+        $('#src').value === 'index' ? 'Reload from index'
+          : `Check live now (${liveCost(d.checked)})`}</button>
       ${hidden ? `<button id="toggle">Show ${hidden} without it</button>` : ''}
     </div>
     <div id="prog" class="hide"><div class="bar"><i></i></div>
@@ -444,8 +446,17 @@ async function refresh(){
   const poll = setInterval(async () => {
     const s = await (await fetch('/api/job/' + job)).json();
     $('.bar > i').style.width = (100 * s.done / (s.total || 1)) + '%';
-    $('#progtxt').textContent =
-      `${s.done} of ${s.total}${s.store ? ' · ' + s.store : ''}`;
+    if (s.state === 'queued'){
+      // One worker, one job at a time. Without this the bar sits at zero and
+      // reads as a hang.
+      $('#progtxt').textContent =
+        'Queued — a province rebuild is using the connection';
+    } else {
+      const eta = (s.eta_min === null || s.eta_min === undefined || !s.done)
+        ? '' : ` · ~${Math.max(0, Math.round(s.eta_min))}m left`;
+      $('#progtxt').textContent =
+        `${s.done} of ${s.total}${s.store ? ' · ' + s.store : ''}${eta}`;
+    }
     if (s.finished){
       clearInterval(poll);
       $('#progtxt').textContent = s.error ? 'Some stores failed: ' + s.error : 'Done.';
@@ -455,12 +466,22 @@ async function refresh(){
 }
 
 // ---- what this installation can do ----------------------------------------
-let isAdmin = false;
+let isAdmin = false, secPerStore = 2.2;
+
+// One live check costs one request per store, and that endpoint answers in
+// about ten seconds. Say so on the button rather than letting someone start a
+// hundred-store sweep and wonder why nothing is happening.
+function liveCost(stores){
+  const s = Math.round((stores || 0) * secPerStore);
+  if (s < 60) return `${stores} stores, ~${s}s`;
+  return `${stores} stores, ~${Math.round(s / 60)} min`;
+}
 
 (async function caps(){
   try{
     const c = await (await fetch('/api/capabilities')).json();
     isAdmin = !!c.admin;
+    if (c.live_seconds_per_store) secPerStore = c.live_seconds_per_store;
     // The packaged app ships without Playwright. Offering a source that
     // cannot run is worse than not offering it.
     if (!c.playwright){
@@ -531,6 +552,9 @@ function fmtAge(h){
   return (h / 24).toFixed(1) + ' days ago';
 }
 
+// Whatever is occupying the single worker right now, if anything.
+let running = null;
+
 function idxRow(p){
   const j = p.job, prov = esc(p.province);
   const cover = p.indexed
@@ -539,20 +563,38 @@ function idxRow(p){
   let act, prog = '';
 
   if (j){
-    const pct = j.total ? Math.round(100 * j.done / j.total) : 0;
+    // A resumed run only counts the stores it still has to reach, so show the
+    // skipped ones too -- "3 of 6" on an 8-store province is otherwise just
+    // baffling.
+    const skipped = j.resumed || 0;
+    const whole = j.total + skipped;
+    const pct = whole ? Math.round(100 * (j.done + skipped) / whole) : 0;
     const eta = (j.eta_min === null || j.eta_min === undefined)
       ? '' : ` · ETA ${Math.max(0, Math.round(j.eta_min))}m`;
-    const line = j.state === 'queued'
-      ? 'Queued — waiting for the current job to finish'
-      : `${j.done} of ${j.total}${j.current ? ' · ' + esc(j.current) : ''}${eta}`;
+    let line;
+    if (j.state === 'queued'){
+      line = running && running.id !== j.id
+        ? `Queued behind ${esc(running.label)} — ${running.done} of ${running.total} done`
+        : 'Queued';
+    } else if (skipped){
+      line = `Resuming · ${j.done + skipped} of ${whole} (${skipped} already done)`
+           + `${j.current ? ' · ' + esc(j.current) : ''}${eta}`;
+    } else {
+      line = `${j.done} of ${j.total}${j.current ? ' · ' + esc(j.current) : ''}${eta}`;
+    }
     act = `<button class="small" data-act="cancel" data-prov="${prov}">Cancel</button>`;
     prog = `<div class="bar"><i style="width:${pct}%"></i></div>
             <div class="prog">${line}</div>`;
   } else if (p.incomplete){
     // A run that stopped early can pick up where it left off, which on
-    // Ontario is the difference between 10 minutes and 49.
-    act = `<button class="small primary" data-act="resume" data-prov="${prov}">Resume</button>
-           <button class="small" data-act="refresh" data-prov="${prov}">Rebuild</button>`;
+    // Ontario is the difference between 10 minutes and 49. Both buttons are
+    // labelled with what they actually do -- a bare "Resume" sitting where
+    // "Refresh" normally sits gets clicked by reflex.
+    const left = Math.max(0, p.stores - p.last_run_stores);
+    act = `<button class="small primary" data-act="resume" data-prov="${prov}"
+             >Resume (${left} left)</button>
+           <button class="small" data-act="refresh" data-prov="${prov}"
+             >Start over</button>`;
   } else {
     act = `<button class="small primary" data-act="refresh" data-prov="${prov}">Refresh</button>`;
   }
@@ -570,13 +612,43 @@ function idxRow(p){
 }
 
 function renderIndex(d){
+  running = d.running || null;
   $('#idxrows').innerHTML = d.provinces.map(idxRow).join('');
 
-  const running = d.provinces.filter(p => p.job);
+  // A live product check uses the same single worker as a rebuild, so it can
+  // hold one up for minutes. It has no province row of its own, which used to
+  // make it invisible -- the rebuild just sat there looking stuck.
+  const live = (d.active || []).filter(j => j.kind === 'live');
+  const busyProv = d.provinces.filter(p => p.job);
   const full = d.provinces.filter(p => p.stores && p.indexed >= p.stores).length;
-  $('#idxsum').textContent = running.length
-    ? `rebuilding ${running.map(p => p.province).join(', ')}`
-    : `${full} of ${d.provinces.length} provinces fully indexed`;
+
+  if (live.length){
+    const j = live[0];
+    const eta = (j.eta_min === null || j.eta_min === undefined)
+      ? '' : `, ~${Math.max(0, Math.round(j.eta_min))}m left`;
+    $('#idxsum').textContent =
+      `live check running — ${j.done} of ${j.total} stores${eta}`;
+  } else if (busyProv.length){
+    $('#idxsum').textContent =
+      `rebuilding ${busyProv.map(p => p.province).join(', ')}`;
+  } else {
+    $('#idxsum').textContent =
+      `${full} of ${d.provinces.length} provinces fully indexed`;
+  }
+
+  // How close we have actually come to the site's request budget. This is
+  // measured from headers every response already carries, so it costs nothing
+  // and replaces an assumption nobody had checked.
+  const rate = Object.entries(d.rate || {})
+    .filter(([, v]) => v && v.lowest_remaining !== null && v.lowest_remaining !== undefined);
+  $('#ratenote').innerHTML = rate.length
+    ? 'Request budget: ' + rate.map(([kind, v]) =>
+        `${kind} runs got within <b>${v.lowest_remaining}</b>` +
+        (v.limit ? ` of ${v.limit}` : '') +
+        ` over ${v.runs} run${v.runs === 1 ? '' : 's'}` +
+        (v.throttled ? `, ${v.throttled} throttled` : ', never throttled')
+      ).join(' · ')
+    : '';
 
   $('#idxrows').querySelectorAll('button[data-act]').forEach(b => {
     b.onclick = async () => {

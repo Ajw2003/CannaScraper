@@ -65,13 +65,35 @@ API_CLIENT_ID = ""        # intentionally blank; see above
 API_CLIENT_SECRET = ""
 
 # Server advertises X-RateLimit-Limit: 60 (per minute) and 429s on short
-# bursts. We pace below that and stay sequential -- at ~0.7s latency the rate
-# limit, not concurrency, is the binding constraint, so parallelism buys
-# nothing and only risks a ban.
+# bursts, so API_RATE_PER_MIN stays under that as a ceiling on how fast we may
+# start requests.
+#
+# API_CONCURRENCY was 1, on the reasoning that at ~0.7s latency the rate limit
+# is the binding constraint and parallelism buys nothing. That stopped being
+# true: scan-multiple-items now answers in ~10s, so sequential calls spend the
+# whole minute waiting and use 6 of the allowed 60 requests. Measured over 8
+# stores, one product:
+#
+#     concurrency 1    79.8s    9.97s/store    6 req/min   0x 429
+#     concurrency 6    17.3s    2.16s/store   28 req/min   0x 429
+#
+# X-RateLimit-Remaining never fell below 54 in either trial. Six leaves about
+# half the allowance unused, and the pacer above still caps the start rate, so
+# if their latency ever recovers we throttle ourselves rather than them.
+#
+# This applies only to the live per-SKU check. index_builder.py uses the
+# separate product/search endpoint, which still answers in ~1.2s and IS
+# rate-limit-bound; it has its own sequential _Pacer and should keep it.
 API_RATE_PER_MIN = 50      # deliberate headroom under the advertised 60
-API_CONCURRENCY = 1
+API_CONCURRENCY = 6
 API_MAX_RETRIES = 3
 API_TIMEOUT_S = 30
+
+# Measured wall-clock per store for a live check at the concurrency above.
+# Used only to put an honest "this will take N minutes" on the button before
+# someone starts a 100-store sweep. Re-measure if the endpoint's latency
+# changes again; being wrong here costs nothing but a bad estimate.
+LIVE_SECONDS_PER_STORE = 2.2
 
 # --- Browser ---------------------------------------------------------------
 HEADLESS = True

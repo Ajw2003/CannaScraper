@@ -17,6 +17,7 @@ progress rather than blocking the request.
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import time
 
@@ -32,6 +33,7 @@ import fetchers
 import jobs
 import main as cli          # reuse fill_missing_stores / tier_price
 import paths
+import ratelimit
 import stores as S
 
 app = FastAPI(title="Canna Cabana stock")
@@ -376,28 +378,79 @@ async def _run_refresh(job: dict, store_list: list[dict], targets: list[dict],
                        province: str, fetcher: str | None = None) -> None:
     """Re-check one product across stores. Runs on the job worker's own loop.
 
-    Per-store failures are recorded and the sweep continues -- one store
-    timing out should not cost the other ninety-one.
+    Stores go out together rather than one after another. The fetcher's own
+    semaphore (config.API_CONCURRENCY) is what bounds how many are in flight,
+    and it can only do that if it is handed more than one at a time -- awaiting
+    each store in turn left that semaphore permanently at one, which is what
+    made a whole-province check cost ten seconds per store.
+
+    Per-store failures are recorded and the sweep continues: one store timing
+    out should not cost the other ninety-one.
     """
     run_id = f"web-{job['id']}"
     conn = db.connect()
+    lock = asyncio.Lock()
+    started = time.time()
+    title = targets[0].get("title", "")[:40]
+
+    ratelimit.start_run()
+    jobs.echo(f"  [live] {title}: {len(store_list)} stores")
     try:
         async with fetchers.get_fetcher(fetcher) as f:
-            for i, st in enumerate(store_list, 1):
+            async def one(st: dict) -> None:
                 if job["cancel_requested"]:
-                    break
-                job["store"] = job["current"] = f"{st['name']}, {st['city']}"
+                    return
                 try:
                     rows = await f.fetch(st, targets, verbose=False)
+                except Exception as e:                      # noqa: BLE001
+                    async with lock:
+                        job["failed_stores"] += 1
+                        job["done"] += 1
+                        job["error"] = f"{st['name']}: {type(e).__name__}"
+                        jobs.echo(f"  [live] [{job['done']}/{job['total']}] "
+                                  f"{st['name'][:26]:<26} FAILED "
+                                  f"{type(e).__name__}")
+                    return
+
+                async with lock:
+                    # One connection, one thread, so the writes need ordering
+                    # but not a second connection.
                     db.write_rows(conn, run_id, rows)
                     job["rows"] += len(rows)
-                except Exception as e:                      # noqa: BLE001
-                    job["failed_stores"] += 1
-                    job["error"] = f"{st['name']}: {type(e).__name__}"
-                job["done"] = i
+                    job["done"] += 1
+                    job["store"] = job["current"] = f"{st['name']}, {st['city']}"
+                    if job["done"]:
+                        per = (time.time() - started) / job["done"]
+                        job["eta_min"] = per * (job["total"] - job["done"]) / 60
+                    jobs.echo(f"  [live] [{job['done']}/{job['total']}] "
+                              f"{st['name'][:26]:<26} {_stock_note(rows)}")
+
+            await asyncio.gather(*(one(st) for st in store_list))
     finally:
         conn.close()
         invalidate_facts(province)
+        jobs.echo(f"  [live] {title}: done, {job['done']}/{job['total']} "
+                  f"stores in {(time.time() - started) / 60:.1f} min"
+                  + (f", {job['failed_stores']} failed"
+                     if job["failed_stores"] else ""))
+        rate = ratelimit.summarize()
+        ratelimit.record("live")
+        if rate:
+            jobs.echo(f"  [live] {rate}")
+
+
+def _stock_note(rows: list[dict]) -> str:
+    """What this store said, in a few words, for the console line."""
+    for r in rows:
+        if r.get("status") != "ok":
+            return "error"
+        if r.get("available"):
+            qty = r.get("api_stock")
+            return f"in stock{'' if qty is None else f' x{qty}'}"
+        if not r.get("carried"):
+            return "not carried"
+        return "sold out"
+    return "no data"
 
 
 @app.get("/api/job/{job_id}")
@@ -418,7 +471,7 @@ def _brief(job: dict) -> dict:
     return {k: job.get(k) for k in
             ("id", "kind", "label", "state", "province", "sku", "run_id",
              "total", "done", "current", "eta_min", "rows", "failed_stores",
-             "error", "started", "finished")}
+             "resumed", "error", "started", "finished")}
 
 
 # --- the index panel -------------------------------------------------------
@@ -457,7 +510,20 @@ def api_index_status():
             })
     finally:
         conn.close()
-    return {"provinces": out, "busy": bool(jobs.active())}
+
+    # Everything in the queue, not just index jobs. One worker runs one job at
+    # a time, so a live check can hold a province build up for minutes -- and
+    # a province row showing "queued" with nothing saying what it is queued
+    # behind is exactly the state that looks like the app has stalled.
+    active = [_brief(j) for j in jobs.active()]
+    running = next((j for j in active if j["state"] == "running"), None)
+    return {"provinces": out,
+            "busy": bool(active),
+            "active": active,
+            "running": running,
+            # Measured headroom against the server's advertised budget, built
+            # up from headers we already receive. See ratelimit.py.
+            "rate": ratelimit.history()}
 
 
 @app.post("/api/index/{province}")
@@ -503,6 +569,7 @@ def api_index_cancel(province: str,
 def api_capabilities(request: Request):
     return {"playwright": fetchers.have_browser(),
             "sources": fetchers.available(),
+            "live_seconds_per_store": config.LIVE_SECONDS_PER_STORE,
             "admin": auth.verify_token(request.cookies.get(auth.COOKIE, ""))}
 
 
