@@ -103,7 +103,24 @@ class ApiFetcher:
             # Free telemetry: the budget headers ride on every response.
             ratelimit.observe(headers, status, store_id)
 
-            if status == 200 and isinstance(body, dict) and body.get("success"):
+            # NOT keyed on body["success"]. The server sets success=false with
+            # message "Bag Changed" whenever ANY requested SKU is not carried
+            # at that store -- the normal case, not a failure. Probed directly:
+            #
+            #   POST .../scan-multiple-items/3154  {"skus":[{"291178":4409...}]}
+            #   200 {"data":{"scanned-items":[],"elitePrices":[],
+            #        "payload":{"291178":4409...},"missingItems":[4409...]},
+            #        "message":"Bag Changed","success":false}
+            #
+            # That is a complete, correct answer: 291178 is not stocked there.
+            # Treating it as an error made the call fall through to the raise
+            # below, after burning every retry first.
+            #
+            # A `data` object is therefore what "the server answered" means.
+            # Whether it answered for everything we asked is a separate
+            # question, settled per-row in _row() via `missing`.
+            if status == 200 and isinstance(body, dict) \
+                    and isinstance(body.get("data"), dict):
                 return body
 
             if status == 429:
@@ -127,7 +144,8 @@ class ApiFetcher:
                 await asyncio.sleep(2.0 * attempt)
                 continue
 
-            # A 4xx that isn't 429, or a success:false -- retrying won't help.
+            # A 4xx that isn't 429, or a 200 carrying no `data` -- retrying
+            # won't help.
             snippet = body if isinstance(body, str) else json.dumps(body)[:150]
             raise RuntimeError(f"HTTP {status}: {snippet}")
 
@@ -145,6 +163,12 @@ class ApiFetcher:
         payload = [{str(v["sku"]): v["variant_id"]}
                    for v in variants if v.get("sku")]
 
+        # The response mixes identifier spaces: `scanned-items` is keyed by
+        # SKU, but `missingItems` holds VARIANT IDs. This maps the latter back
+        # so both can be compared against a SKU.
+        sku_of_variant = {str(v["variant_id"]): str(v["sku"])
+                          for v in variants if v.get("sku") and v.get("variant_id")}
+
         items: dict = {}
         elite: dict = {}
         missing: set = set()
@@ -154,9 +178,15 @@ class ApiFetcher:
             try:
                 body = await self._call(sid, payload)
                 data = body.get("data") or {}
+                # Both come back as [] rather than {} when empty.
                 items = data.get("scanned-items") or {}
                 elite = data.get("elitePrices") or {}
-                missing = {str(m) for m in (data.get("missingItems") or [])}
+                # Translate to SKUs. Without this, `missing` held variant ids
+                # and _row()'s `sku not in missing` test could never be false,
+                # so every legitimately not-carried product was also tagged
+                # with the error "sku absent from response".
+                missing = {sku_of_variant.get(str(m), str(m))
+                           for m in (data.get("missingItems") or [])}
             except Exception as e:                       # noqa: BLE001
                 err = f"{type(e).__name__}: {e}"[:300]
 

@@ -7,7 +7,47 @@ Ordered by how wrong the current behaviour is, not by effort.
 
 ---
 
-## 1. `api_fetcher._call()` treats a normal response as a hard failure
+## 1. ~~`api_fetcher._call()` treats a normal response as a hard failure~~ FIXED 2026-08-25
+
+Fixed, along with a second bug it was hiding. Verify with:
+
+```
+python verify_scan_fix.py
+```
+
+**What was actually wrong — two coupled bugs, not one.** The second masked the
+first: both produced noise on uncarried products, so neither looked like the
+other's cause.
+
+**Bug 1** — success was keyed on `body["success"]`, which is false for any
+batch containing an uncarried SKU. Now keyed on the presence of a `data`
+object, i.e. "the server answered". Proven against the live endpoint:
+
+```
+server says success = False | message = Bag Changed
+OLD  body.get("success")                -> False   => raise, 3 retries burned
+NEW  isinstance(body.get("data"), dict) -> True    => accept and read it
+```
+
+**Bug 2** — `missingItems` holds VARIANT IDS while `scanned-items` is keyed by
+SKU. `_row()` tested `sku not in missing` against that set, so the test could
+never pass and every legitimately not-carried product was also tagged with the
+error `"sku absent from response"`. `fetch()` now translates back through the
+variant list:
+
+```
+missingItems (variant ids): [44094929305788, 44094930518204]
+requested skus            : ['291178', '290961', '114263']
+translated back to skus    : ['291178', '290961']
+```
+
+With the translation correct, that per-row test becomes the real coverage
+check: a SKU in neither `scanned-items` nor `missingItems` is now the only
+thing that raises the error, which is what it was always meant to mean.
+
+Original report follows.
+
+---
 
 **Where:** [fetchers/api_fetcher.py:106](fetchers/api_fetcher.py)
 

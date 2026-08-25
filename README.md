@@ -210,6 +210,7 @@ is deleting the new file and renaming the backup.
 | `db_bench.py` | Times the read queries, for judging a schema change |
 | `payload_probe.py` | Measures how much of the search response we keep, and whether the server will send less |
 | `scan_ceiling_probe.py` | Finds the SKU-per-call ceiling on `scan-multiple-items` |
+| `verify_scan_fix.py` | Checks the scan backend reads a "Bag Changed" response as data, not failure |
 | `main.py` | Orchestration and CLI |
 | `discover.py` | Re-derives the store/age-gate state keys if the site changes |
 | `app.py` | The application: banner, web server, tunnel. What the exe runs |
