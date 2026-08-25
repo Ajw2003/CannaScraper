@@ -3,6 +3,7 @@
 #     .\build.ps1
 #     .\build.ps1 -SkipCloudflared     # no public tunnel in this build
 #     .\build.ps1 -Clean               # throw away dist\ and build\ first
+#     .\build.ps1 -StopRunning         # kill a running copy that locks dist\
 #
 # Every step prints PASS or FAIL and the script stops at the first failure, so
 # a green run means the exe in dist\CannaCabana\ actually started and passed
@@ -10,7 +11,8 @@
 
 param(
     [switch]$SkipCloudflared,
-    [switch]$Clean
+    [switch]$Clean,
+    [switch]$StopRunning
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,7 +102,84 @@ foreach ($d in @("dist", "build")) {
 }
 Step-Pass $(if ($Clean) { "removed dist\ and build\" } else { "reusing build cache (-Clean to force)" })
 
-# --- 5. package -------------------------------------------------------------
+# --- 5. nothing holding the output open -------------------------------------
+# A running copy keeps its .pyd files locked, and PyInstaller's failure for
+# that is an eight-frame traceback ending in "Access is denied" -- which tells
+# you nothing about the actual cause. Say it plainly instead.
+Step-Start "no running copy locking dist\"
+$target = Join-Path $Here "dist\CannaCabana"
+
+# An Explorer window sitting in the output folder holds a handle on the
+# directory itself. PyInstaller then deletes every file inside it and fails on
+# the final rmdir, which reads as a permissions problem and is not one.
+$explorers = @()
+try {
+    $shell = New-Object -ComObject Shell.Application
+    foreach ($w in $shell.Windows()) {
+        try {
+            $loc = $w.Document.Folder.Self.Path
+            if ($loc -eq $target -or $loc -like "$target\*") { $explorers += $w }
+        } catch { }
+    }
+} catch { }
+if ($explorers.Count -gt 0) {
+    if ($StopRunning) {
+        # Navigate away rather than closing the window; they get it back with
+        # the Back button.
+        foreach ($w in $explorers) { try { $w.Navigate((Split-Path $target)) } catch { } }
+        Start-Sleep -Milliseconds 700
+        Write-Host ""
+        Write-Host "      moved $($explorers.Count) Explorer window(s) out of dist\CannaCabana"
+        Write-Host ("      " + (" " * 40)) -NoNewline
+    } else {
+        Write-Host ""
+        Write-Host "      An Explorer window is open in dist\CannaCabana." -ForegroundColor Yellow
+        Write-Host "      It locks the folder. Close it, or re-run with -StopRunning."
+        Write-Host ("      " + (" " * 40)) -NoNewline
+        Step-Fail "output folder is in use by Explorer"
+    }
+}
+
+$running = Get-Process CannaCabana -ErrorAction SilentlyContinue
+if ($running -and -not $StopRunning) {
+    Write-Host ""
+    Write-Host "      CannaCabana.exe is running (PID $($running.Id -join ', '))." -ForegroundColor Yellow
+    Write-Host "      It holds files in dist\ open, so the build cannot replace them."
+    Write-Host "      Close that window (Ctrl-C in it), or re-run:  .\build.ps1 -StopRunning"
+    Write-Host ("      " + (" " * 40)) -NoNewline
+    Step-Fail "output folder is in use"
+}
+if ($running) { $running | Stop-Process -Force }
+
+# Windows releases handles a moment after the holder lets go, and
+# PyInstaller's first act is to rmdir this folder. Clear it here, with
+# retries, so the build does not race that and fail on WinError 32.
+$freed = $true
+if (Test-Path $target) {
+    $freed = $false
+    foreach ($try in 1..20) {
+        try { Remove-Item -Recurse -Force $target -ErrorAction Stop; $freed = $true; break }
+        catch { Start-Sleep -Milliseconds 500 }
+    }
+}
+if (-not $freed) {
+    Write-Host ""
+    Write-Host "      Something still holds dist\CannaCabana open after 10s." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "      Most likely: the console window the app was launched from."
+    Write-Host "      Closing the app does not close its window, and that window's"
+    Write-Host "      working directory is this folder, which keeps it locked."
+    Write-Host "      Close it and re-run. (Restart Manager will not report this"
+    Write-Host "      one - a working-directory lock is not a file handle.)"
+    Write-Host ""
+    Write-Host "      Otherwise: an Explorer window inside it, or antivirus mid-scan."
+    Write-Host ("      " + (" " * 40)) -NoNewline
+    Step-Fail "could not clear the output folder"
+}
+Step-Pass $(if ($running) { "stopped the running app, dist\ is clear" }
+            else { "nothing holding it" })
+
+# --- 6. package -------------------------------------------------------------
 Step-Start "PyInstaller bundle"
 Push-Location $Here
 try {
@@ -113,7 +192,16 @@ $Exe = Join-Path $Here "dist\CannaCabana\CannaCabana.exe"
 if (-not (Test-Path $Exe)) { Step-Fail "no exe at $Exe" }
 Step-Pass "built"
 
-# --- 6. it starts and proves itself -----------------------------------------
+# --- 7. helper next to the exe ----------------------------------------------
+# Not a PyInstaller "data" file: those land in _internal\, and this one has to
+# sit beside the exe where someone will actually see and double-click it.
+Step-Start "password helper alongside the exe"
+$Bat = Join-Path $Here "Set password.bat"
+if (-not (Test-Path $Bat)) { Step-Fail "missing '$Bat'" }
+Copy-Item $Bat (Join-Path $Here "dist\CannaCabana\") -Force
+Step-Pass "Set password.bat copied"
+
+# --- 8. it starts and proves itself -----------------------------------------
 Step-Start "packaged app passes its self-test"
 Write-Host ""
 & $Exe --selftest
@@ -122,7 +210,7 @@ Write-Host ("      " + (" " * 40)) -NoNewline
 if ($selftest -ne 0) { Step-Fail "$selftest check(s) failed" }
 Step-Pass "all checks green"
 
-# --- 7. report --------------------------------------------------------------
+# --- 9. report --------------------------------------------------------------
 Step-Start "size"
 $size = (Get-ChildItem (Join-Path $Here "dist\CannaCabana") -Recurse -File |
          Measure-Object -Property Length -Sum).Sum

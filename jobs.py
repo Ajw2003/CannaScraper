@@ -182,10 +182,19 @@ def _index_body(job: dict, province: str, resume: str | None,
             echo(f"  [index] {province}: {ev['total']} stores, "
                  f"~{ev['eta_min']:.0f} min   run {ev['run_id']}")
         elif phase == "stored":
+            # Not "N products, N in stock": the search endpoint returns
+            # in-stock items only, so those were always the same number.
+            # What actually moved is what sold out since the last run.
+            sold = (f", {ev['closed']:>4} sold out since last run"
+                    if ev["closed"] else "")
+            odd = ("  !! %d rows had no stock -- endpoint contract changed"
+                   % (ev["rows"] - ev["instock"])
+                   if ev["rows"] != ev["instock"] else "")
             eta = ev["eta_min"]
             eta_s = f"   ETA {eta:.0f}m" if eta is not None else ""
-            echo(f"  [index] [{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
-                 f"{ev['rows']:>5} products, {ev['instock']:>5} in stock{eta_s}")
+            echo(f"  [index] [{ev['done']}/{ev['total']}] "
+                 f"{ev['store'][:26]:<26} {ev['instock']:>5} in stock"
+                 f"{sold}{eta_s}{odd}")
         elif phase == "failed":
             echo(f"  [index] [{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
                  f"FAILED {ev['error']}")

@@ -60,8 +60,9 @@ def parse_args(argv=None):
                    help="local and LAN only, no public URL")
     p.add_argument("--no-browser", action="store_true",
                    help="do not open a browser window on start")
-    p.add_argument("--set-password", metavar="PASSWORD",
-                   help="set the admin password and exit")
+    p.add_argument("--set-password", nargs="?", const="", metavar="PASSWORD",
+                   help="set the admin password and exit; omit the value to "
+                        "be prompted (this is what 'Set password.bat' does)")
     p.add_argument("--selftest", action="store_true",
                    help="run the self-test and exit")
     return p.parse_args(argv)
@@ -81,14 +82,86 @@ def row(label: str, value: str) -> None:
     print(f"  {label:<14}:  {value}")
 
 
+def have_console() -> bool:
+    """Is there a real console we can prompt on?
+
+    `sys.stdin.isatty()` is not trustworthy here: under Git Bash with stdin
+    redirected from /dev/null it still reports True. GetConsoleMode only
+    succeeds on an actual console handle, which is the thing Windows getpass
+    needs, so ask that instead.
+    """
+    if os.name != "nt":
+        return bool(sys.stdin and sys.stdin.isatty())
+    import ctypes
+
+    STD_INPUT_HANDLE = -10
+    k32 = ctypes.windll.kernel32
+    mode = ctypes.c_ulong()
+    return bool(k32.GetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE),
+                                   ctypes.byref(mode)))
+
+
+def prompt_password() -> str | None:
+    """Ask for a new password, twice, without echoing it.
+
+    Exists because a flag you have to type at a command line is the wrong
+    recovery path for an app people launch by double-clicking. 'Set
+    password.bat' next to the exe runs this.
+    """
+    import getpass
+
+    # Windows getpass reads the console device directly rather than stdin, so
+    # with no real console it blocks forever instead of seeing EOF. Refuse up
+    # front and name the form that works without one.
+    if not have_console():
+        print("  No interactive console here, so there is nothing to type "
+              "into.")
+        print("  Pass the password directly instead:\n")
+        print('      CannaCabana.exe --set-password "your-password"\n')
+        return None
+
+    print("=" * BANNER_W)
+    print("  Set the admin password")
+    print("=" * BANNER_W)
+    print("  This gates province rebuilds and live stock checks.")
+    print("  Searching stays open to anyone with the link.")
+    print("  Anyone already signed in will be signed out.\n")
+
+    for attempt in range(3):
+        try:
+            first = getpass.getpass("  New password : ").strip()
+            again = getpass.getpass("  Type it again: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled. Nothing changed.")
+            return None
+        if len(first) < 6:
+            print("  Too short - use at least 6 characters.\n")
+            continue
+        if first != again:
+            print("  Those two did not match.\n")
+            continue
+        return first
+    print("  Three tries, no match. Nothing changed.")
+    return None
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
 
     import auth
 
-    if args.set_password:
-        auth.set_password(args.set_password)
-        print("Password updated. Existing sessions were signed out.")
+    # `is not None` rather than truthiness: `--set-password` with no value
+    # means "ask me", and argparse hands that over as an empty string.
+    if args.set_password is not None:
+        import paths
+
+        new = args.set_password or prompt_password()
+        if not new:
+            return 1
+        auth.set_password(new)
+        print("\n  Password updated. Anyone signed in was signed out.")
+        print(f"  Stored (hashed) in {paths.data('settings.json')}")
+        print("  The running app, if any, picks this up on the next attempt.")
         return 0
 
     if args.selftest:
@@ -148,10 +221,15 @@ def main(argv=None) -> int:
             else:
                 row("Public", tun.error or "no URL yet — watch for it below")
 
+    # Name the recovery path that actually exists here. In the packaged app
+    # that is a file you can double-click; from source it is the flag.
+    how = ('run "Set password.bat" to change' if getattr(sys, "frozen", False)
+           else "python app.py --set-password")
     if generated:
         row("Admin password", f"{generated}    <-- write this down")
+        row("", f"lost it? {how}")
     else:
-        row("Admin password", "already set (--set-password to change)")
+        row("Admin password", f"already set  ({how})")
     row("Data", str(paths.DATA_DIR))
     print("-" * BANNER_W)
     print("  Reading is open to anyone with the link.")

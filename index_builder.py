@@ -208,6 +208,13 @@ def build_index(province: str, *, limit: int | None = None,
       stored  -- this store landed; carries rows/instock/closed
       failed  -- this store raised; carries error
 
+    On `rows` vs `instock`: the search endpoint returns in-stock products
+    only, so every row this builds has available=1 and the two are equal.
+    Reporting both as if they were separate facts is noise. They are kept
+    separate here for one reason: if they ever diverge, the endpoint has
+    stopped honouring that contract, and the CLI says so loudly instead of
+    quietly indexing rows that are not actually in stock.
+
     `should_stop()` is polled once per store. A store's paged fetch is not
     interruptible mid-flight, so a cancel takes effect at the next store
     boundary -- up to ~29s. Say that in the UI rather than implying it is
@@ -293,12 +300,17 @@ def main(argv=None) -> int:
             print(f"Stores: {ev['total']} to index   (~{ev['eta_min']:.0f} min)")
             print()
         elif phase == "stored":
-            closed = f", {ev['closed']} closed out" if ev["closed"] else ""
+            sold = (f", {ev['closed']:>4} sold out since last run"
+                    if ev["closed"] else "")
+            odd = ("  !! %d rows came back with no stock -- the search "
+                   "endpoint no longer returns in-stock only"
+                   % (ev["rows"] - ev["instock"])
+                   if ev["rows"] != ev["instock"] else "")
             eta = ev["eta_min"]
             eta_s = f"   ETA {eta:.0f}m" if eta is not None else ""
             print(f"[{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
-                  f"{ev['city'][:14]:<14} {ev['rows']:>5} products, "
-                  f"{ev['instock']:>5} in stock{closed}{eta_s}")
+                  f"{ev['city'][:14]:<14} {ev['instock']:>5} in stock"
+                  f"{sold}{eta_s}{odd}")
         elif phase == "failed":
             print(f"[{ev['done']}/{ev['total']}] {ev['store'][:26]:<26} "
                   f"FAILED {ev['error']}")

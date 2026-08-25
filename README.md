@@ -221,8 +221,17 @@ refuse geolocation over plain http, so the LAN URL cannot offer it.
 **Who can do what.** Searching and viewing stock are open to anyone with the
 link. Anything that makes your machine talk to cannacabana.com — a live
 re-check, a province rebuild — needs the admin password. That password is
-printed once on first run and only its hash is stored; if you miss it, use
-`--set-password`.
+printed once on first run and only its hash is stored.
+
+If you miss it, **double-click `Set password.bat`** next to the exe: it
+prompts for a new one, twice, without echoing. Safe to run while the app is
+up — the server re-reads the password on every login attempt, so the new one
+works immediately without a restart. Everyone signed in gets signed out,
+because session cookies are signed with the password hash.
+
+`--set-password "value"` still works for scripting. Note that `--set-password`
+with no value needs a real console; run from a pipe it says so and exits
+rather than hanging.
 
 **Settings** live in `%LOCALAPPDATA%\CannaCabana\settings.json`, alongside
 `history.db` and the catalogue. Deleting that folder resets the app.
