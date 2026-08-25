@@ -180,6 +180,22 @@ def _is_legacy(conn: sqlite3.Connection) -> bool:
     return bool(row) and row[0] == "table"
 
 
+def _drop_empty_legacy(conn: sqlite3.Connection) -> bool:
+    """Clear a pre-split table that holds no rows. True if it did.
+
+    An installed-but-never-indexed app has exactly this: the old schema, zero
+    rows. Refusing to start and demanding a migration would be pure friction --
+    there is nothing to migrate, nothing to back up, and nothing that can be
+    lost. The refusal below is for databases with data in them.
+    """
+    n = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+    if n:
+        return False
+    conn.execute("DROP TABLE observations")
+    conn.commit()
+    return True
+
+
 def connect(path: str | None = None) -> sqlite3.Connection:
     path = path or config.DB_PATH
     conn = sqlite3.connect(path)
@@ -194,7 +210,7 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     # function every command calls would mean it happening while someone was
     # only trying to read. normalize_db.py does it deliberately, takes a backup
     # first, and verifies before dropping anything.
-    if _is_legacy(conn):
+    if _is_legacy(conn) and not _drop_empty_legacy(conn):
         conn.close()
         raise LegacySchema(
             f"{path} still uses the pre-split `observations` table.\n"
