@@ -54,6 +54,12 @@ def _targets(sku: str, cat) -> list[dict]:
     return [v for v in cat if str(v.get("sku")) == str(sku)]
 
 
+CATALOG_ERROR = JSONResponse(
+    {"error": "The product catalogue could not be read. "
+              "Refresh the catalogue and try again."},
+    status_code=503)
+
+
 # Per-SKU facts for a province: in stock anywhere, category, THC/CBD. Costs a
 # ~250ms scan over 90k rows, and search runs on every debounced keystroke, so
 # cache it briefly. It only changes when an index or live check writes.
@@ -287,8 +293,13 @@ def api_search(q: str = "", limit: int = 50, offset: int = 0,
 
     # Dedupe by SKU first, then page -- otherwise the total is wrong and
     # paging skips items.
+    try:
+        hits = catalog.search(q, limit=None)
+    except catalog.CatalogUnavailable:
+        return CATALOG_ERROR
+
     seen, uniq = set(), []
-    for v in catalog.search(q, limit=None):
+    for v in hits:
         if v["sku"] in seen:
             continue
         seen.add(v["sku"])
@@ -356,7 +367,10 @@ def api_results(sku: str, lat: float | None = None, lng: float | None = None,
                 province: str | None = None, all_stores: bool = False,
                 sort: str = "distance"):
     """Instant answer from the index/cache. No scraping."""
-    cat = catalog.get_catalog(verbose=False)
+    try:
+        cat = catalog.load_catalog()
+    except catalog.CatalogUnavailable:
+        return CATALOG_ERROR
     targets = _targets(sku, cat)
     if not targets:
         return JSONResponse({"error": f"unknown sku {sku}"}, status_code=404)
@@ -414,7 +428,10 @@ def api_refresh(sku: str, lat: float | None = None, lng: float | None = None,
     Password-gated: it spends the shared rate-limit budget and sends traffic
     to the site from whichever machine is hosting this.
     """
-    cat = catalog.get_catalog(verbose=False)
+    try:
+        cat = catalog.load_catalog()
+    except catalog.CatalogUnavailable:
+        return CATALOG_ERROR
     targets = _targets(sku, cat)
     if not targets:
         return JSONResponse({"error": f"unknown sku {sku}"}, status_code=404)
@@ -621,6 +638,54 @@ def api_index_status():
             # route means the index is capped at ~46 min per province no
             # matter what; see egress.py for why.
             "egress": [e.snapshot() for e in egress.build_pool()]}
+
+
+@app.get("/api/catalog/status")
+def api_catalog_status():
+    """Age of the product catalogue, and whether a refresh is under way."""
+    age = catalog.catalog_age_hours()
+    job = jobs.active_catalog()
+    try:
+        variants = len(catalog.load_catalog())
+        ok = True
+    except catalog.CatalogUnavailable:
+        variants, ok = 0, False
+    return {"age_hours": None if age == float("inf") else round(age, 1),
+            "stale": catalog.catalog_is_stale(),
+            "max_age_hours": config.CATALOG_MAX_AGE_H,
+            "variants": variants,
+            "ok": ok,
+            "job": job["id"] if job else None,
+            "last_error": jobs.last_catalog_error()}
+
+
+@app.post("/api/catalog/refresh")
+def api_catalog_refresh(_admin: bool = Depends(auth.require_admin)):
+    """Queue a catalogue re-download. Returns a job id to poll.
+
+    Password-gated for the same reason as /api/refresh: it spends the shared
+    rate-limit budget against the site.
+    """
+    try:
+        job = jobs.submit_catalog()
+    except jobs.Busy as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    return {"job": job["id"]}
+
+
+@app.on_event("startup")
+def _refresh_stale_catalog() -> None:
+    """Top the catalogue up in the background if it has gone stale.
+
+    Search never waits on this -- it reads whatever is on disk. This just means
+    a machine that is online quietly ends up current, instead of the catalogue
+    ageing forever because nothing ever asked for it.
+    """
+    if catalog.catalog_is_stale():
+        try:
+            jobs.submit_catalog()
+        except jobs.Busy:
+            pass
 
 
 @app.post("/api/index/{province}")

@@ -71,6 +71,27 @@ def active_for_province(province: str) -> dict | None:
     return None
 
 
+def active_catalog() -> dict | None:
+    """The queued or running catalogue refresh, if there is one."""
+    for j in all_jobs():
+        if j["kind"] == "catalog" and j["state"] in ACTIVE:
+            return j
+    return None
+
+
+def last_catalog_error() -> str | None:
+    """Why the most recent catalogue refresh failed, if it did.
+
+    A refresh that dies leaves the old catalogue in place and search working,
+    so nothing else surfaces the failure -- the button would just appear to do
+    nothing.
+    """
+    for j in all_jobs():                       # newest first
+        if j["kind"] == "catalog" and j["finished"]:
+            return j["error"] if j["state"] == "error" else None
+    return None
+
+
 def cancel(job_id: str) -> bool:
     """Ask a job to stop. An index stops at the next store boundary."""
     with _lock:
@@ -134,6 +155,26 @@ def submit_index(province: str, *, resume: str | None = None,
 
     def run(job):
         _index_body(job, province, resume, limit)
+
+    _enqueue(job, run)
+    return job
+
+
+def submit_catalog() -> dict:
+    """Queue a catalogue re-download. Raises Busy if one is already pending.
+
+    Refreshing has to happen off the request path -- it walks every page of
+    /products.json with a second between them -- so it goes through the same
+    serialized worker as an index build rather than blocking a search.
+    """
+    existing = active_catalog()
+    if existing:
+        raise Busy(f"a catalogue refresh is already {existing['state']}")
+
+    job = _new("catalog", "Refresh catalogue", 0)
+
+    def run(job):
+        _catalog_body(job)
 
     _enqueue(job, run)
     return job
@@ -261,6 +302,20 @@ def _index_body(job: dict, province: str, resume: str | None,
             index_finished_hook(province, res)
         except Exception as e:                                    # noqa: BLE001
             echo(f"  [index] post-run hook failed: {type(e).__name__}: {e}")
+
+
+def _catalog_body(job: dict) -> None:
+    import catalog
+
+    echo("  [catalog] refreshing product catalogue...")
+    with _lock:
+        job["current"] = job["store"] = "downloading catalogue"
+    rows = catalog.refresh_catalog(verbose=False)
+    with _lock:
+        job["rows"] = len(rows)
+        job["done"] = job["total"] = len(rows)
+        job["current"] = job["store"] = ""
+    echo(f"  [catalog] {len(rows)} variants")
 
 
 def _drain() -> None:

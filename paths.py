@@ -67,4 +67,9 @@ def seed(name: str) -> str:
         src = APP_DIR / name
         if src.exists() and src.resolve() != dest.resolve():
             shutil.copy2(src, dest)
+            # copy2 preserves the source mtime, which in a packaged build is
+            # the build machine's clock. Age is how we decide a seeded file
+            # wants refreshing, so stamp the copy with when it actually landed
+            # here -- otherwise a new install reports itself weeks stale.
+            os.utime(dest, None)
     return str(dest)

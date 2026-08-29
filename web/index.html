@@ -143,6 +143,8 @@ a.idxlink{color:var(--accent);cursor:pointer}
   <input type="search" id="q" placeholder="Search a product…  e.g. grape gas"
          autocomplete="off" autofocus>
 
+  <div class="muted" id="catnote" style="margin:6px 0 2px"></div>
+
   <div class="row controls">
     <select id="prov" title="Province"></select>
     <select id="cat" title="Category"><option value="">All categories</option></select>
@@ -212,8 +214,20 @@ async function search(q, offset = 0){
   const sp = new URLSearchParams({q, limit: PAGE, offset,
     province: $('#prov').value, stocked_only: $('#stocked').checked,
     category: $('#cat').value});
-  const r = await fetch('/api/search?' + sp);
-  const d = await r.json();
+  // A failed search used to render nothing at all -- no results and no
+  // message -- which is indistinguishable from "nothing matched" and reads as
+  // the search being broken. Say what happened instead.
+  let r, d;
+  try{
+    r = await fetch('/api/search?' + sp);
+    d = await r.json();
+  }catch(e){
+    return searchError('Could not reach the server. Is the app still running?');
+  }
+  if (!r.ok){
+    return searchError((d && d.error)
+      || `Search failed (HTTP ${r.status}).`);
+  }
 
   if (!d.total){
     $('#plist').innerHTML = `<div class="muted">${d.hidden
@@ -241,12 +255,20 @@ async function search(q, offset = 0){
   if (mb) mb.onclick = () => { mb.disabled = true; search(q, shown); };
 }
 
+function searchError(msg){
+  $('#plist').innerHTML = `<div class="muted">${esc(msg)}</div>`;
+  $('#more').innerHTML = '';
+  loadCatalog();
+}
+
 function esc(s){ return (s||'').replace(/[<>&"]/g,
   c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 
 // ---- provinces ------------------------------------------------------------
 (async function provinces(){
-  const d = await (await fetch('/api/provinces')).json();
+  let d;
+  try{ d = await (await fetch('/api/provinces')).json(); }
+  catch(e){ return searchError('Could not reach the server.'); }
   $('#prov').innerHTML = d.provinces.map(p =>
     `<option value="${esc(p.name)}"${p.name === d.default ? ' selected' : ''}>
        ${esc(p.name)} (${p.stores})</option>`).join('');
@@ -259,13 +281,72 @@ async function loadCats(){
   const keep = $('#cat').value;
   const sp = new URLSearchParams({province: $('#prov').value,
                                   stocked_only: $('#stocked').checked});
-  const d = await (await fetch('/api/categories?' + sp)).json();
+  // The category list is a nicety; losing it must not take search with it.
+  let d;
+  try{
+    const r = await fetch('/api/categories?' + sp);
+    if (!r.ok) return;
+    d = await r.json();
+  }catch(e){ return; }
   $('#cat').innerHTML = '<option value="">All categories</option>' +
     d.categories.map(c =>
       `<option value="${esc(c.name)}"${c.name === keep ? ' selected' : ''}>
          ${esc(c.name)} (${c.skus})</option>`).join('');
 }
 $('#cat').onchange = () => rerun();
+
+// ---- product catalogue ----------------------------------------------------
+// The catalogue is the list of products that exist at all; the index is where
+// they are in stock. Search reads the catalogue straight off disk and never
+// waits on a download, so a stale one still answers -- but say how old it is,
+// and offer to top it up.
+let catTimer = null, catWasBusy = false;
+
+async function loadCatalog(){
+  let d;
+  try{ d = await (await fetch('/api/catalog/status')).json(); }
+  catch(e){ return; }
+
+  const btn = `<button class="small" id="catgo">Refresh catalogue</button>`;
+  if (!d.ok){
+    $('#catnote').innerHTML =
+      `<b>The product catalogue could not be read.</b> ${btn}`;
+  } else if (d.job){
+    $('#catnote').innerHTML = `Refreshing the catalogue…`;
+  } else if (d.last_error){
+    $('#catnote').innerHTML = `${d.variants} products · catalogue updated `
+      + `${fmtAge(d.age_hours)} — last refresh failed `
+      + `(${esc(d.last_error)}). ${btn}`;
+  } else if (d.stale){
+    $('#catnote').innerHTML = `${d.variants} products · catalogue updated `
+      + `${fmtAge(d.age_hours)} — search still works. ${btn}`;
+  } else {
+    $('#catnote').innerHTML = `${d.variants} products · catalogue updated `
+      + `${fmtAge(d.age_hours)}. ${btn}`;
+  }
+
+  const go = $('#catgo');
+  if (go) go.onclick = async () => {
+    go.disabled = true;
+    const r = await post('/api/catalog/refresh');
+    if (!r) { go.disabled = false; return; }        // 401 opened the unlock box
+    if (!r.ok){
+      const e = await r.json().catch(() => ({}));
+      $('#catnote').textContent = e.error || 'Could not start the refresh.';
+      return;
+    }
+    loadCatalog();
+  };
+
+  // Poll only while one is actually running.
+  clearTimeout(catTimer);
+  if (d.job) catTimer = setTimeout(loadCatalog, 3000);
+
+  // A refresh that just landed brought new products in; show them without
+  // making anyone retype.
+  if (catWasBusy && !d.job){ loadCats(); rerun(); }
+  catWasBusy = !!d.job;
+}
 
 // ---- geolocation ----------------------------------------------------------
 $('#loc').onclick = () => {
@@ -689,6 +770,7 @@ async function loadIndex(){
   }
 }
 loadIndex();
+loadCatalog();
 
 // "not indexed yet" in a result opens the panel rather than naming a script
 // the person reading it has no way to run.

@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
 
 import config
+import paths
 
 
 def _fetch_json(url: str) -> dict:
@@ -62,24 +64,103 @@ def fetch_catalog(verbose: bool = True) -> list[dict]:
     return rows
 
 
+class CatalogUnavailable(RuntimeError):
+    """The on-disk catalogue could not be read, and re-seeding did not help."""
+
+
+#: One refresh at a time. Two concurrent fetches would race the cache write and
+#: burn twice the rate budget for the same rows.
+_refresh_lock = threading.Lock()
+
+
 def _cache_age_hours(path: str) -> float:
     if not os.path.exists(path):
         return float("inf")
     return (time.time() - os.path.getmtime(path)) / 3600.0
 
 
-def get_catalog(refresh: bool = False, verbose: bool = True) -> list[dict]:
-    if not refresh and _cache_age_hours(config.CATALOG_CACHE) < config.CATALOG_MAX_AGE_H:
-        with open(config.CATALOG_CACHE, encoding="utf-8") as f:
-            return json.load(f)["variants"]
+def catalog_age_hours() -> float:
+    """Hours since the catalogue cache was last written. inf if absent."""
+    return _cache_age_hours(config.CATALOG_CACHE)
 
-    if verbose:
-        print("Fetching catalog from public Shopify JSON...")
-    rows = fetch_catalog(verbose=verbose)
-    with open(config.CATALOG_CACHE, "w", encoding="utf-8") as f:
-        json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(),
-                   "variants": rows}, f)
-    return rows
+
+def catalog_is_stale() -> bool:
+    return catalog_age_hours() >= config.CATALOG_MAX_AGE_H
+
+
+def _read_cache() -> dict:
+    with open(config.CATALOG_CACHE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_catalog() -> list[dict]:
+    """The catalogue as it is on disk -- never a network call, never stale-gated.
+
+    Search runs through here on every keystroke, so it must always answer. An
+    old catalogue is enormously better than no search: products are added to
+    the range far more slowly than someone loses their connection. Staleness is
+    surfaced to the UI (see `catalog_age_hours`) and repaired by a background
+    refresh, not by blocking a request on a multi-minute download.
+
+    A cache that is missing or truncated -- a refresh killed mid-write, before
+    those became atomic -- is re-seeded from the copy bundled with the app
+    rather than left to fail every search from then on.
+    """
+    try:
+        return _read_cache()["variants"]
+    except (OSError, ValueError, KeyError):
+        pass
+
+    # Drop the unreadable file so seed() copies the bundled one back over it.
+    try:
+        os.replace(config.CATALOG_CACHE, config.CATALOG_CACHE + ".bad")
+    except OSError:
+        pass
+    try:
+        paths.seed(os.path.basename(config.CATALOG_CACHE))
+        return _read_cache()["variants"]
+    except (OSError, ValueError, KeyError) as e:
+        raise CatalogUnavailable(
+            f"Cannot read the product catalogue at {config.CATALOG_CACHE}: {e}. "
+            f"Refresh the catalogue to download a fresh copy.") from e
+
+
+def refresh_catalog(verbose: bool = True) -> list[dict]:
+    """Download the catalogue and replace the cache atomically.
+
+    Written to a temp file and `os.replace`d, so a fetch that dies partway
+    leaves the previous catalogue intact instead of a truncated file that
+    breaks every subsequent search.
+    """
+    with _refresh_lock:
+        if verbose:
+            print("Fetching catalog from public Shopify JSON...")
+        rows = fetch_catalog(verbose=verbose)
+        tmp = config.CATALOG_CACHE + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(),
+                           "variants": rows}, f)
+            os.replace(tmp, config.CATALOG_CACHE)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        return rows
+
+
+def get_catalog(refresh: bool = False, verbose: bool = True) -> list[dict]:
+    """Read the catalogue, downloading it only when asked to.
+
+    Staleness deliberately does NOT trigger a download here. It used to, which
+    meant any search made more than `CATALOG_MAX_AGE_H` after the last refresh
+    stalled on a multi-page fetch and returned HTTP 500 if the machine was
+    offline -- with the packaged app shipping a catalogue already older than
+    that on the day it was built.
+    """
+    return refresh_catalog(verbose=verbose) if refresh else load_catalog()
 
 
 # --- Watchlist -------------------------------------------------------------
@@ -111,7 +192,7 @@ def search(terms: str, catalog: list[dict] | None = None,
     `limit=None` returns everything -- callers that page results need the full
     set to count it.
     """
-    catalog = catalog if catalog is not None else get_catalog(verbose=False)
+    catalog = catalog if catalog is not None else load_catalog()
     q = terms.lower().strip()
     words = [w for w in q.split() if w]
     if not words:

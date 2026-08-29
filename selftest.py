@@ -145,6 +145,45 @@ def main() -> int:
         cat = catalog.get_catalog(verbose=False)
         return len(cat) > 1000, f"{len(cat)} variants"
 
+    def t_catalog_stale_still_searches():
+        """A catalogue past its age gate must still answer, offline.
+
+        It used to trigger a synchronous multi-page download from inside
+        /api/search, so any search made more than CATALOG_MAX_AGE_H after the
+        last refresh stalled, and returned HTTP 500 with no network -- which
+        is every packaged build, whose bundled catalogue is already older than
+        that on the day it ships.
+        """
+        old = os.stat(config.CATALOG_CACHE).st_mtime
+        aged = time.time() - (config.CATALOG_MAX_AGE_H + 24) * 3600
+        os.utime(config.CATALOG_CACHE, (aged, aged))
+        try:
+            stale = catalog.catalog_is_stale()
+            hits = catalog.search("grape", limit=5)
+            s, d = c.get("/api/search?q=grape&stocked_only=false")
+        finally:
+            os.utime(config.CATALOG_CACHE, (old, old))
+        return stale and len(hits) > 0 and s == 200 and d["total"] > 0, \
+            f"{len(hits)} hits from a catalogue {config.CATALOG_MAX_AGE_H + 24}h old"
+
+    def t_catalog_corrupt_self_heals():
+        """A half-written cache must not break search for good.
+
+        The refresh used to write the cache in place, so a fetch killed partway
+        left a truncated file that failed json.load on every search from then
+        on -- surviving restarts.
+        """
+        keep = config.CATALOG_CACHE + ".selftest"
+        os.replace(config.CATALOG_CACHE, keep)
+        with open(config.CATALOG_CACHE, "w", encoding="utf-8") as f:
+            f.write('{"variants": [{"sku": "1"')
+        try:
+            hits = catalog.search("grape", limit=5)
+            healed = len(catalog.load_catalog()) > 1000
+        finally:
+            os.replace(keep, config.CATALOG_CACHE)
+        return len(hits) > 0 and healed, "truncated cache re-seeded from the bundle"
+
     def t_stores():
         allst = S.get_stores(province="")
         provs = {s["province"] for s in allst if s.get("province")}
@@ -712,6 +751,9 @@ def main() -> int:
         check("data paths are absolute and sandboxed", t_paths)
         check("bundled catalogue seeds into the data dir", t_seed)
         check("catalogue loads", t_catalog)
+        check("stale catalogue still searches offline",
+              t_catalog_stale_still_searches)
+        check("truncated catalogue self-heals", t_catalog_corrupt_self_heals)
         check("store registry loads", t_stores)
         check("database opens clean on a fresh install", t_db)
         check("the page itself is served", t_page)
