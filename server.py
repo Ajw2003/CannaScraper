@@ -18,7 +18,11 @@ progress rather than blocking the request.
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
+import subprocess
+import sys
+import threading
 import time
 
 from fastapi import Depends, FastAPI, Request, Response
@@ -26,6 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import auth
+import buildinfo
 import catalog
 import config
 import db
@@ -686,6 +691,73 @@ def _refresh_stale_catalog() -> None:
             jobs.submit_catalog()
         except jobs.Busy:
             pass
+
+
+# --- build status / self-rebuild --------------------------------------------
+# An exe built before a fix landed serves the old code with no visible sign of
+# it -- which is exactly how the search bug this exists to catch stayed live
+# for days after ApiFork had already fixed it. buildinfo.status() compares the
+# running bundle against the checkout it was built from; this exposes that and
+# offers to act on it.
+
+#: Set by api_build_rebuild, read by app.py's main loop. PyInstaller has to
+#: delete this process's own _internal\*.pyd files, so the rebuild cannot run
+#: in-process -- this process has to exit first and hand off to a detached
+#: helper, which app.py's loop is what actually does the exiting.
+_rebuild_requested = threading.Event()
+
+
+def rebuild_requested() -> bool:
+    return _rebuild_requested.is_set()
+
+
+@app.get("/api/build/status")
+def api_build_status():
+    """What this build is, and whether the source it came from has moved on.
+
+    Open, like /api/index/status: read-only, and worth showing without being
+    signed in.
+    """
+    return buildinfo.status()
+
+
+@app.post("/api/build/rebuild")
+def api_build_rebuild(_admin: bool = Depends(auth.require_admin)):
+    """Launch a rebuild in a detached console, then ask this process to exit.
+
+    Admin-gated like /api/refresh and /api/catalog/refresh: this restarts the
+    whole app, which anyone with just the read-only link should not be able
+    to trigger.
+    """
+    status = buildinfo.status()
+    if not status["frozen"]:
+        return JSONResponse(
+            {"error": "Running from source -- there is nothing to rebuild."},
+            status_code=400)
+    if not status["rebuildable"]:
+        return JSONResponse(
+            {"error": f"Cannot rebuild: {status['source_dir'] or 'no source directory recorded'} "
+                      f"is missing build.ps1, rebuild.ps1, or its virtualenv."},
+            status_code=409)
+    if _rebuild_requested.is_set():
+        return JSONResponse({"error": "A rebuild was already requested."},
+                            status_code=409)
+
+    source_dir = status["source_dir"]
+    rebuild_script = os.path.join(source_dir, "rebuild.ps1")
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", rebuild_script, "-WaitForPid", str(os.getpid())],
+            cwd=source_dir,
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            close_fds=True)
+    except OSError as e:
+        return JSONResponse({"error": f"Could not launch the rebuild: {e}"},
+                            status_code=500)
+
+    _rebuild_requested.set()
+    return {"rebuilding": True}
 
 
 @app.post("/api/index/{province}")

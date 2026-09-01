@@ -231,6 +231,10 @@ def main(argv=None) -> int:
     else:
         row("Admin password", f"already set  ({how})")
     row("Data", str(paths.DATA_DIR))
+    import buildinfo
+    build_line = buildinfo.summary()
+    if build_line:
+        row("Build", build_line)
     print("-" * BANNER_W)
     print("  Reading is open to anyone with the link.")
     print("  Refreshing a province needs the password.")
@@ -242,6 +246,10 @@ def main(argv=None) -> int:
     try:
         while web.is_alive():
             web.join(0.5)
+            if server.rebuild_requested():
+                print("\n  Rebuild requested from the page -- stopping to "
+                      "hand off to the new build...")
+                break
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:

@@ -117,11 +117,16 @@ button.small{padding:6px 11px;font-size:13px}
   border:1px solid var(--line);border-radius:9px;background:var(--bg);
   color:var(--fg)}
 a.idxlink{color:var(--accent);cursor:pointer}
+#buildnote{border:1px solid var(--low);border-radius:9px;background:var(--lowbg);
+  color:var(--low);padding:9px 13px;margin-bottom:10px;font-size:13px}
+#buildnote button{margin-left:4px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Where's it in stock?</h1>
+
+  <div id="buildnote" class="hide"></div>
 
   <details class="panel" id="idxpanel">
     <summary>Catalogue index <span class="muted" id="idxsum">checking…</span></summary>
@@ -346,6 +351,66 @@ async function loadCatalog(){
   // making anyone retype.
   if (catWasBusy && !d.job){ loadCats(); rerun(); }
   catWasBusy = !!d.job;
+}
+
+// ---- build status -----------------------------------------------------
+// A packaged build that predates the fix its own source now has looks
+// identical to a working one from the outside -- typing into search just
+// quietly does nothing. Say when that is true, and offer to fix it without
+// anyone having to find a terminal.
+let buildRebuilding = false;
+
+async function loadBuild(){
+  const note = $('#buildnote');
+  let d;
+  try{ d = await (await fetch('/api/build/status')).json(); }
+  catch(e){
+    // Expected while the old process is exiting and the new one is starting;
+    // that is the whole point of a rebuild. Keep polling until it answers.
+    if (buildRebuilding){
+      note.className = '';
+      note.innerHTML = `Rebuilding and restarting… this can take a few `
+        + `minutes. This page will come back on its own.`;
+      setTimeout(loadBuild, 3000);
+    }
+    return;
+  }
+
+  if (buildRebuilding && !d.stale){
+    // The new build landed and is no longer stale -- the rebuild is done and
+    // this note has done its job. Reload once so the fresh frontend takes
+    // over completely, not just this banner.
+    location.reload();
+    return;
+  }
+  if (!d.frozen || !d.stale){
+    note.className = 'hide';
+    return;
+  }
+
+  const age = d.age_hours >= 48 ? `${Math.round(d.age_hours / 24)} days old`
+                                 : `${Math.round(d.age_hours)}h old`;
+  const btn = d.rebuildable
+    ? `<button class="small" id="buildgo">Rebuild and restart</button>`
+    : '';
+  note.className = '';
+  note.innerHTML = `<b>This build is ${age} and the source has changed since`
+    + `${d.changed ? ` (${esc(d.changed)} is newer)` : ''}.</b> `
+    + `Search may be missing fixes already made on the branch. ${btn}`;
+
+  const go = $('#buildgo');
+  if (go) go.onclick = async () => {
+    go.disabled = true;
+    const r = await post('/api/build/rebuild');
+    if (!r) { go.disabled = false; return; }        // 401 opened the unlock box
+    if (!r.ok){
+      const e = await r.json().catch(() => ({}));
+      note.textContent = e.error || 'Could not start the rebuild.';
+      return;
+    }
+    buildRebuilding = true;
+    loadBuild();
+  };
 }
 
 // ---- geolocation ----------------------------------------------------------
@@ -771,6 +836,7 @@ async function loadIndex(){
 }
 loadIndex();
 loadCatalog();
+loadBuild();
 
 // "not indexed yet" in a result opens the panel rather than naming a script
 // the person reading it has no way to run.

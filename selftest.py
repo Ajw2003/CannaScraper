@@ -30,6 +30,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 # Must happen before anything imports paths/config, or the test would run
 # against the real history.db and settings.json.
@@ -106,6 +107,7 @@ def main() -> int:
     print()
 
     import auth
+    import buildinfo
     import catalog
     import config
     import db
@@ -183,6 +185,96 @@ def main() -> int:
         finally:
             os.replace(keep, config.CATALOG_CACHE)
         return len(hits) > 0 and healed, "truncated cache re-seeded from the bundle"
+
+    def t_buildinfo_not_stale_now():
+        """Right now, this build must not report itself as stale.
+
+        From a source checkout there is nothing to compare against, so
+        status() reports stale=False outright. In the packaged self-test
+        (`CannaCabana.exe --selftest`) this runs against the real bundle,
+        moments after build.ps1 wrote its stamp -- the source has not changed
+        since, so it must also read as current.
+        """
+        s = buildinfo.status()
+        return not s["stale"], f"frozen={s['frozen']} stale={s['stale']}"
+
+    def t_buildinfo_detects_stale_build():
+        """A source file newer than the recorded build must be caught.
+
+        This is the exact failure that shipped an exe four days behind its own
+        fix: the bundle looked fine from the outside, and nothing compared it
+        to the checkout it came from. Simulate a frozen build by pointing
+        paths.FROZEN/APP_DIR at a throwaway directory with its own stamp and
+        source file, so this does not depend on an actual PyInstaller bundle
+        existing.
+        """
+        tmp = tempfile.mkdtemp(prefix="cannacabana-buildinfo-")
+        try:
+            src = os.path.join(tmp, "src")
+            os.makedirs(src)
+            built_at = time.time() - 3600            # built an hour ago
+            with open(os.path.join(tmp, "buildinfo.json"), "w") as f:
+                json.dump({
+                    "built_at": datetime.fromtimestamp(
+                        built_at, tz=timezone.utc).isoformat(),
+                    "commit": "deadbee", "branch": "test", "dirty": False,
+                    "source_dir": src}, f)
+            with open(os.path.join(src, "app.py"), "w") as f:
+                f.write("# stand-in source file\n")
+            os.utime(os.path.join(src, "app.py"), (built_at - 60, built_at - 60))
+            with open(os.path.join(src, "build.ps1"), "w") as f:
+                f.write("")
+            with open(os.path.join(src, "rebuild.ps1"), "w") as f:
+                f.write("")
+            venv = os.path.join(src, ".venv", "Scripts")
+            os.makedirs(venv)
+            open(os.path.join(venv, "python.exe"), "w").close()
+
+            was_frozen, was_app_dir = paths.FROZEN, paths.APP_DIR
+            paths.FROZEN, paths.APP_DIR = True, __import__("pathlib").Path(tmp)
+            try:
+                fresh = buildinfo.status()
+                # Now edit the source after the build -- this is the case
+                # that shipped a stale exe with no signal of it.
+                with open(os.path.join(src, "app.py"), "a") as f:
+                    f.write("# edited after the build\n")
+                os.utime(os.path.join(src, "app.py"))
+                stale = buildinfo.status()
+            finally:
+                paths.FROZEN, paths.APP_DIR = was_frozen, was_app_dir
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+        return (not fresh["stale"] and fresh["rebuildable"]
+                and stale["stale"] and stale["changed"] == "app.py"), \
+            f"fresh stale={fresh['stale']}, edited stale={stale['stale']}"
+
+    def t_buildinfo_reads_powershell_bom():
+        """The stamp build.ps1 actually writes must actually be readable.
+
+        `Set-Content -Encoding utf8` in PowerShell 5.1 prepends a UTF-8 BOM.
+        Reading that with plain utf-8 raises inside json.load, which read()
+        swallows as "no stamp" -- so a real build silently reported
+        built_at=None and stale=False forever, exactly the kind of blind spot
+        this feature exists to close. This caught it before the exe did.
+        """
+        tmp = tempfile.mkdtemp(prefix="cannacabana-buildinfo-bom-")
+        try:
+            with open(os.path.join(tmp, "buildinfo.json"),
+                     "w", encoding="utf-8-sig") as f:
+                json.dump({"built_at": datetime.now(timezone.utc).isoformat(),
+                           "commit": "abc1234", "branch": "test",
+                           "dirty": False, "source_dir": ""}, f)
+            was_frozen, was_app_dir = paths.FROZEN, paths.APP_DIR
+            paths.FROZEN, paths.APP_DIR = True, __import__("pathlib").Path(tmp)
+            try:
+                stamp = buildinfo.read()
+            finally:
+                paths.FROZEN, paths.APP_DIR = was_frozen, was_app_dir
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return (stamp is not None and stamp.get("commit") == "abc1234"), \
+            f"read() -> {stamp}"
 
     def t_stores():
         allst = S.get_stores(province="")
@@ -754,6 +846,10 @@ def main() -> int:
         check("stale catalogue still searches offline",
               t_catalog_stale_still_searches)
         check("truncated catalogue self-heals", t_catalog_corrupt_self_heals)
+        check("build stamp is not stale right now", t_buildinfo_not_stale_now)
+        check("stale build is detected", t_buildinfo_detects_stale_build)
+        check("build stamp survives PowerShell's BOM",
+              t_buildinfo_reads_powershell_bom)
         check("store registry loads", t_stores)
         check("database opens clean on a fresh install", t_db)
         check("the page itself is served", t_page)

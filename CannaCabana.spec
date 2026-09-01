@@ -31,6 +31,14 @@ _cf = os.path.join(HERE, "cloudflared.exe")
 if os.path.isfile(_cf):
     datas.append((_cf, "."))
 
+# Written by build.ps1 right before this runs. A bare `pyinstaller
+# CannaCabana.spec` (skipping build.ps1) still has to work, so this is
+# optional -- buildinfo.status() already treats a missing stamp as "nothing
+# to compare, not stale".
+_buildinfo = os.path.join(HERE, "buildinfo.json")
+if os.path.isfile(_buildinfo):
+    datas.append((_buildinfo, "."))
+
 hiddenimports = [
     # uvicorn picks these by string at runtime, so static analysis misses them.
     "uvicorn.logging",
@@ -53,6 +61,7 @@ hiddenimports = [
     "auth",
     "paths",
     "ratelimit",
+    "buildinfo",
 ]
 
 excludes = [

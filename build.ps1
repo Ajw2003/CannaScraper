@@ -211,6 +211,53 @@ if (-not $freed) {
 Step-Pass $(if ($running) { "stopped the running app, dist\ is clear" }
             else { "nothing holding it" })
 
+# --- 5b. product catalogue is current ---------------------------------------
+# A packaged build ships whatever catalog.json happens to be sitting in this
+# folder. Search reads that file straight off disk with no age gate (see
+# catalog.load_catalog), which is what makes an offline install work at all --
+# but it also means a catalogue that was already stale on the day of the build
+# stays exactly that stale until someone clicks Refresh. Freshen it here so a
+# new build starts current.
+#
+# Network failure is a warning, not a Step-Fail: with the age gate gone, a
+# stale bundled catalogue is harmless -- search still answers, and the app's
+# own startup hook tops it up later. A build should not fail because the site
+# happened to be down.
+Step-Start "product catalogue refreshed"
+$catalogOut = & $Py -c "import catalog; catalog.refresh_catalog(verbose=False)" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "      could not refresh -- shipping the existing catalog.json" -ForegroundColor Yellow
+    Write-Host "      ($($catalogOut | Select-Object -Last 1))"
+    Write-Host ("      " + (" " * 40)) -NoNewline
+    Step-Pass "kept existing catalogue (offline?)"
+} else {
+    Step-Pass "downloaded current"
+}
+
+# --- 5c. build stamp ---------------------------------------------------------
+# What buildinfo.status() compares the checkout against at runtime, so a
+# stale exe can say so instead of silently serving old code next to a source
+# tree that has moved on. Written before PyInstaller so CannaCabana.spec picks
+# it up; source_dir is $Here itself, since that is what a rebuild operates on.
+Step-Start "build stamp written"
+$commit = (& git rev-parse --short HEAD 2>$null)
+$branch = (& git rev-parse --abbrev-ref HEAD 2>$null)
+$dirty = $false
+if ($LASTEXITCODE -eq 0) {
+    $porcelain = (& git status --porcelain 2>$null)
+    $dirty = [bool]$porcelain
+}
+$stamp = [ordered]@{
+    built_at    = (Get-Date).ToUniversalTime().ToString("o")
+    commit      = if ($commit) { $commit } else { $null }
+    branch      = if ($branch) { $branch } else { $null }
+    dirty       = $dirty
+    source_dir  = $Here
+}
+$stamp | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Here "buildinfo.json")
+Step-Pass $(if ($commit) { "$branch @ $commit$(if ($dirty) {' (dirty)'})" } else { "no git -- commit/branch left blank" })
+
 # --- 6. package -------------------------------------------------------------
 Step-Start "PyInstaller bundle"
 Push-Location $Here
