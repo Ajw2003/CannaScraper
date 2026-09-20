@@ -1,0 +1,14 @@
+name: Scrape Alberta
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build-province.yml
+    with:
+      province: Alberta
+    permissions:
+      contents: write

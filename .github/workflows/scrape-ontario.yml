@@ -1,0 +1,14 @@
+name: Scrape Ontario
+
+on:
+  schedule:
+    - cron: "15 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build-province.yml
+    with:
+      province: Ontario
+    permissions:
+      contents: write

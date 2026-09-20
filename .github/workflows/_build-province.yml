@@ -1,0 +1,83 @@
+name: Build province index (reusable)
+
+# Shared build logic for all five per-province scrape workflows: index one
+# province via the API fetcher, export thin JSON, and push it to the `data`
+# branch. See docs/plans/github-pages-per-province.md.
+
+on:
+  workflow_call:
+    inputs:
+      province:
+        description: "Province name, exactly as it appears in stores.py (e.g. 'Alberta')"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: CannaScraper
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the province index
+        # index_builder.py always uses the /api/product/search endpoint --
+        # there is no Playwright/browser path here and no --fetcher flag to
+        # pass; see the module docstring in index_builder.py.
+        run: |
+          python index_builder.py --province "${{ inputs.province }}" \
+            --db "$RUNNER_TEMP/history.db"
+
+      - name: Export static JSON
+        run: |
+          python export_pages_json.py --province "${{ inputs.province }}" \
+            --db "$RUNNER_TEMP/history.db" --out-dir "$RUNNER_TEMP/data-out"
+
+      - name: Checkout data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin data || true
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git checkout -B data origin/data
+          else
+            git checkout --orphan data
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+      - name: Commit and push (retry on race with another province)
+        run: |
+          set -e
+          mkdir -p data
+          cp "$RUNNER_TEMP"/data-out/*.json data/
+          git add data/*.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update ${{ inputs.province }} stock data"
+
+          attempt=1
+          max_attempts=3
+          until git push origin data; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Push failed after $max_attempts attempts."
+              exit 1
+            fi
+            echo "Push rejected (attempt $attempt/$max_attempts) -- rebasing and retrying."
+            git fetch origin data
+            git rebase origin/data
+            attempt=$((attempt + 1))
+          done

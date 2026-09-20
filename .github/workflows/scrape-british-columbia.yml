@@ -1,0 +1,14 @@
+name: Scrape British Columbia
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build-province.yml
+    with:
+      province: British Columbia
+    permissions:
+      contents: write

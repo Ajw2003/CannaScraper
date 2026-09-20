@@ -1,0 +1,14 @@
+name: Scrape Manitoba
+
+on:
+  schedule:
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build-province.yml
+    with:
+      province: Manitoba
+    permissions:
+      contents: write

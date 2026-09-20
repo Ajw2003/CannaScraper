@@ -1,0 +1,14 @@
+name: Scrape Saskatchewan
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build-province.yml
+    with:
+      province: Saskatchewan
+    permissions:
+      contents: write

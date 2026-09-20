@@ -1,0 +1,56 @@
+name: Deploy Pages
+
+# Republishes the site whenever any province's refresh pushes new data, or on
+# demand. Combines site/ (from main) with data/*.json (from the data
+# branch) into one output directory and publishes it via the Actions-based
+# Pages deploy. See docs/plans/github-pages-per-province.md.
+
+on:
+  push:
+    branches:
+      - data
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout site (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+
+      - name: Checkout data (data branch)
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: data-branch
+
+      - name: Assemble Pages output
+        run: |
+          mkdir -p _site
+          cp -r main/CannaScraper/site/. _site/
+          mkdir -p _site/data
+          cp data-branch/data/*.json _site/data/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

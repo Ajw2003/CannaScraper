@@ -1,0 +1,30 @@
+# CannaScraper -- local runtime data, caches and build artifacts.
+# The workflow-generated top-level data/ (province JSON on the `data` branch)
+# is NOT covered by any of these patterns.
+
+CannaScraper/history.db
+CannaScraper/history.db.pre-normalize
+CannaScraper/.venv/
+CannaScraper/dist/
+CannaScraper/build/
+CannaScraper/raw/
+CannaScraper/*.csv
+CannaScraper/__pycache__/
+CannaScraper/settings.json
+CannaScraper/cloudflared.exe
+CannaScraper/audit_203012.csv
+CannaScraper/results.csv
+CannaScraper/test_results.csv
+CannaScraper/ratelimit_probe.csv
+CannaScraper/ratelimit_probe_summary.json
+CannaScraper/bench_before.json
+CannaScraper/bench_after.json
+
+# Local cache files at the CannaScraper root (see catalog.py / stores.py /
+# stores.py's geocode cache / ratelimit.py / buildinfo.py) -- regenerated on
+# demand, not source.
+CannaScraper/catalog.json
+CannaScraper/stores.json
+CannaScraper/geocode.json
+CannaScraper/ratelimit.json
+CannaScraper/buildinfo.json

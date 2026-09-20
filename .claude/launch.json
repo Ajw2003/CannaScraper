@@ -1,0 +1,40 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cannascraper",
+      "runtimeExecutable": "CannaScraper/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "CannaScraper/app.py",
+        "--no-tunnel",
+        "--no-browser",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "cannascraper-public",
+      "runtimeExecutable": "CannaScraper/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "CannaScraper/app.py",
+        "--no-browser",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "cannascraper-dev",
+      "runtimeExecutable": "CannaScraper/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "CannaScraper/app.py",
+        "--no-tunnel",
+        "--no-browser",
+        "--port",
+        "8114"
+      ],
+      "port": 8114
+    }
+  ]
+}
