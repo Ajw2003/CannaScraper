@@ -1,11 +1,24 @@
-.venv/
-__pycache__/
-*.pyc
+history.db
+history.db-wal
+history.db-shm
+# Backup normalize_db.py takes before splitting the observations table.
+# Same size as the database itself -- keep it out of the repo.
+history.db.pre-normalize
 
-# generated data
-*.db
-*.csv
-raw/
-stores.json
-catalog.json
-discovery.json
+# Benchmark output from db_bench.py --save.
+bench_*.json
+
+# Holds the admin password hash and, if you use a named tunnel, its token.
+settings.json
+ratelimit.json
+# Appends a row per request on every probe run.
+ratelimit_probe.csv
+
+# Build output and the vendored tunnel binary.
+dist/
+build/
+cloudflared.exe
+
+# Written by build.ps1 on every build; records this machine's checkout path
+# and the commit at build time, so it is regenerated output, not source.
+buildinfo.json

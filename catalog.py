@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
 
 import config
+import paths
 
 
 def _fetch_json(url: str) -> dict:
@@ -36,6 +38,8 @@ def fetch_catalog(verbose: bool = True) -> list[dict]:
         if not products:
             break
         for p in products:
+            imgs = p.get("images") or []
+            img = (imgs[0] or {}).get("src", "") if imgs else ""
             for v in p.get("variants", []):
                 rows.append({
                     "product_id": p.get("id"),
@@ -51,6 +55,7 @@ def fetch_catalog(verbose: bool = True) -> list[dict]:
                     "default_price": v.get("price"),
                     "default_compare_at": v.get("compare_at_price"),
                     "default_available": v.get("available"),
+                    "image": (v.get("featured_image") or {}).get("src") or img,
                 })
         if verbose:
             print(f"  page {page:>2}: {len(products):>3} products  (variants so far: {len(rows)})")
@@ -59,24 +64,103 @@ def fetch_catalog(verbose: bool = True) -> list[dict]:
     return rows
 
 
+class CatalogUnavailable(RuntimeError):
+    """The on-disk catalogue could not be read, and re-seeding did not help."""
+
+
+#: One refresh at a time. Two concurrent fetches would race the cache write and
+#: burn twice the rate budget for the same rows.
+_refresh_lock = threading.Lock()
+
+
 def _cache_age_hours(path: str) -> float:
     if not os.path.exists(path):
         return float("inf")
     return (time.time() - os.path.getmtime(path)) / 3600.0
 
 
-def get_catalog(refresh: bool = False, verbose: bool = True) -> list[dict]:
-    if not refresh and _cache_age_hours(config.CATALOG_CACHE) < config.CATALOG_MAX_AGE_H:
-        with open(config.CATALOG_CACHE, encoding="utf-8") as f:
-            return json.load(f)["variants"]
+def catalog_age_hours() -> float:
+    """Hours since the catalogue cache was last written. inf if absent."""
+    return _cache_age_hours(config.CATALOG_CACHE)
 
-    if verbose:
-        print("Fetching catalog from public Shopify JSON...")
-    rows = fetch_catalog(verbose=verbose)
-    with open(config.CATALOG_CACHE, "w", encoding="utf-8") as f:
-        json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(),
-                   "variants": rows}, f)
-    return rows
+
+def catalog_is_stale() -> bool:
+    return catalog_age_hours() >= config.CATALOG_MAX_AGE_H
+
+
+def _read_cache() -> dict:
+    with open(config.CATALOG_CACHE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_catalog() -> list[dict]:
+    """The catalogue as it is on disk -- never a network call, never stale-gated.
+
+    Search runs through here on every keystroke, so it must always answer. An
+    old catalogue is enormously better than no search: products are added to
+    the range far more slowly than someone loses their connection. Staleness is
+    surfaced to the UI (see `catalog_age_hours`) and repaired by a background
+    refresh, not by blocking a request on a multi-minute download.
+
+    A cache that is missing or truncated -- a refresh killed mid-write, before
+    those became atomic -- is re-seeded from the copy bundled with the app
+    rather than left to fail every search from then on.
+    """
+    try:
+        return _read_cache()["variants"]
+    except (OSError, ValueError, KeyError):
+        pass
+
+    # Drop the unreadable file so seed() copies the bundled one back over it.
+    try:
+        os.replace(config.CATALOG_CACHE, config.CATALOG_CACHE + ".bad")
+    except OSError:
+        pass
+    try:
+        paths.seed(os.path.basename(config.CATALOG_CACHE))
+        return _read_cache()["variants"]
+    except (OSError, ValueError, KeyError) as e:
+        raise CatalogUnavailable(
+            f"Cannot read the product catalogue at {config.CATALOG_CACHE}: {e}. "
+            f"Refresh the catalogue to download a fresh copy.") from e
+
+
+def refresh_catalog(verbose: bool = True) -> list[dict]:
+    """Download the catalogue and replace the cache atomically.
+
+    Written to a temp file and `os.replace`d, so a fetch that dies partway
+    leaves the previous catalogue intact instead of a truncated file that
+    breaks every subsequent search.
+    """
+    with _refresh_lock:
+        if verbose:
+            print("Fetching catalog from public Shopify JSON...")
+        rows = fetch_catalog(verbose=verbose)
+        tmp = config.CATALOG_CACHE + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(),
+                           "variants": rows}, f)
+            os.replace(tmp, config.CATALOG_CACHE)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        return rows
+
+
+def get_catalog(refresh: bool = False, verbose: bool = True) -> list[dict]:
+    """Read the catalogue, downloading it only when asked to.
+
+    Staleness deliberately does NOT trigger a download here. It used to, which
+    meant any search made more than `CATALOG_MAX_AGE_H` after the last refresh
+    stalled on a multi-page fetch and returned HTTP 500 if the machine was
+    offline -- with the packaged app shipping a catalogue already older than
+    that on the day it was built.
+    """
+    return refresh_catalog(verbose=verbose) if refresh else load_catalog()
 
 
 # --- Watchlist -------------------------------------------------------------
@@ -97,20 +181,46 @@ def _read_watchlist() -> list[str]:
 
 
 def search(terms: str, catalog: list[dict] | None = None,
-           limit: int = 40) -> list[dict]:
-    """Find catalog variants whose title/brand matches every word in `terms`.
+           limit: int | None = 40) -> list[dict]:
+    """Variants matching every word in `terms`, best match first.
 
-    Use this to look up a SKU before scraping: `python catalog.py --find "og kush"`.
+    Ranked rather than alphabetical: a search for "grape gas" should lead with
+    "Pufferz Grape Gas", not with whichever matching brand sorts first. Words
+    may match the title, brand, category or size, but title matches rank above
+    the rest.
+
+    `limit=None` returns everything -- callers that page results need the full
+    set to count it.
     """
-    catalog = catalog if catalog is not None else get_catalog(verbose=False)
-    words = [w for w in terms.lower().split() if w]
-    hits = []
+    catalog = catalog if catalog is not None else load_catalog()
+    q = terms.lower().strip()
+    words = [w for w in q.split() if w]
+    if not words:
+        return []
+
+    scored = []
     for v in catalog:
-        hay = f"{v['title']} {v['brand']} {v['category']} {v['size']}".lower()
-        if all(w in hay for w in words):
-            hits.append(v)
-    hits.sort(key=lambda v: (v["brand"], v["title"], v["size"]))
-    return hits[:limit]
+        title = (v.get("title") or "").lower()
+        hay = f"{title} {v.get('brand','')} {v.get('category','')} {v.get('size','')}".lower()
+        if not all(w in hay for w in words):
+            continue
+
+        if title == q:
+            rank = 0                                  # exact title
+        elif title.startswith(q):
+            rank = 1                                  # title begins with it
+        elif q in title:
+            rank = 2                                  # phrase inside the title
+        elif all(w in title for w in words):
+            rank = 3                                  # all words in the title
+        else:
+            rank = 4                                  # matched via brand/category
+        # Shorter titles are usually the more specific product.
+        scored.append((rank, len(title), v.get("brand", ""), title, v))
+
+    scored.sort(key=lambda t: t[:4])
+    hits = [t[4] for t in scored]
+    return hits[:limit] if limit else hits
 
 
 def resolve_terms(terms: list[str], catalog: list[dict] | None = None,

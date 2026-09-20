@@ -59,6 +59,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="skip building/opening the HTML report")
     p.add_argument("--fetcher", default=None, choices=["browser", "api"],
                    help=f"backend to fetch prices with (default {config.FETCHER})")
+    p.add_argument("--compare", action="store_true",
+                   help="run BOTH backends over the same stores and diff them; "
+                        "writes nothing to the database")
     p.add_argument("--csv", default=config.CSV_PATH)
     p.add_argument("--db", default=config.DB_PATH)
     return p.parse_args(argv)
@@ -143,6 +146,9 @@ async def run(args: argparse.Namespace) -> int:
                   f'or "lat,lng".')
             return 2
 
+    if args.compare:
+        return await compare_backends(store_list, targets)
+
     conn = db.connect(args.db)
 
     # --- cached first ------------------------------------------------------
@@ -157,15 +163,33 @@ async def run(args: argparse.Namespace) -> int:
         by_id = {s["store_id"]: s for s in store_list}
         for r in cached:
             r["distance_km"] = by_id.get(r["store_id"], {}).get("distance_km")
+        from_index = any(str(r.get("run_id", "")).startswith("index-")
+                         for r in cached)
+        src = "STOCK INDEX" if from_index else "CACHE"
+        print(f"\n[source: {src} — {age:.1f}h old]")
+        cached = fill_missing_stores(cached, store_list, targets, conn)
         show_results(cached, age, args, targets, location_label,
-                     live=False, conn=conn)
+                     live=False, conn=conn, checked=len(store_list))
         if not args.cached:
-            print(f"\n(Cached from {age:.1f}h ago. Use --refresh to check now.)")
+            print(f"\n(Reused data {age:.1f}h old. Use --refresh to check now.)")
         return 0
 
     if args.cached:
-        print("\nNothing cached for that product yet — run without --cached "
-              "to check the stores.")
+        # The index stores in-stock items only, so "no rows" can mean either
+        # "never looked" or "looked, and it isn't in stock". Say which.
+        covered, idx_age = db.index_coverage(conn, store_ids)
+        if covered:
+            # "Nowhere near you has this" is a real answer, so show it the same
+            # way as any other -- listing every store checked, and opening the
+            # report. Returning early here left the page unwritten.
+            print(f"\n[source: STOCK INDEX — {idx_age:.1f}h old]")
+            rows = fill_missing_stores([], store_list, targets, conn)
+            show_results(rows, idx_age, args, targets, location_label,
+                         live=False, conn=conn, checked=len(store_list))
+            return 0
+        print("\nNo index or cached data covers those stores yet.")
+        print("Run:  python index_builder.py     (builds the province index)")
+        print("or drop --cached to check them live now.")
         return 1
 
     skip: set[str] = set()
@@ -174,6 +198,17 @@ async def run(args: argparse.Namespace) -> int:
         print(f"\nResuming: {len(skip)} store(s) already complete, skipping them.")
 
     todo = [s for s in store_list if s["store_id"] not in skip]
+
+    # Stores the scan endpoint will not serve. Skipped here rather than failed
+    # slowly: store 528 alone costs 90s of retry backoff per run.
+    if (args.fetcher or config.FETCHER) == "api":
+        todo, unscannable = fetchers.partition_scannable(
+            todo, db.last_scan_attempt(conn, [s["store_id"] for s in todo]))
+        for s in unscannable:
+            print(f"Skipping   {s['name']} ({s['store_id']}) — known bad on "
+                  f"the scan endpoint; retried every "
+                  f"{config.SCAN_SKIP_RETRY_DAYS} days")
+
     print(f"\nProvince : {args.province}")
     print(f"Stores   : {len(todo)} to scrape ({len(store_list)} in scope)")
     print(f"Products : {len(targets)} variant(s)")
@@ -185,6 +220,8 @@ async def run(args: argparse.Namespace) -> int:
     fetcher = fetchers.get_fetcher(args.fetcher)
     if args.headed and hasattr(fetcher, "_headless"):
         fetcher._headless = False
+    print(f"[source: LIVE via {fetcher.name.upper()}"
+          f"{' (real browser)' if fetcher.name == 'browser' else ''}]\n")
 
     async with fetcher as f:
         for i, st in enumerate(todo, 1):
@@ -202,7 +239,9 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"    !! store failed: {type(e).__name__}: {e}")
                 failed_stores.append((st["store_id"], str(e)[:120]))
 
-            if i < len(todo):
+            # Backends that pace themselves (the rate-limited API) must not get
+            # an extra delay stacked on top -- that alone would triple a sweep.
+            if i < len(todo) and not getattr(f, "paces_itself", False):
                 await asyncio.sleep(random.uniform(*config.DELAY_RANGE))
 
     # --- output ------------------------------------------------------------
@@ -230,14 +269,158 @@ async def run(args: argparse.Namespace) -> int:
     by_id = {s["store_id"]: s for s in store_list}
     for r in fresh:
         r["distance_km"] = by_id.get(r["store_id"], {}).get("distance_km")
-    show_results(fresh, 0.0, args, targets, location_label, live=True, conn=conn)
+    fresh = fill_missing_stores(fresh, store_list, targets, conn)
+    show_results(fresh, 0.0, args, targets, location_label, live=True, conn=conn,
+                 checked=len(store_list))
 
     conn.close()
     return 0 if not failed_stores else 1
 
 
+def fill_missing_stores(rows: list[dict], store_list: list[dict],
+                        targets: list[dict], conn) -> list[dict]:
+    """Add a row for every store we checked that returned nothing.
+
+    The stock index holds in-stock items only, so a store with no row simply
+    isn't stocking the product. Dropping it makes "1 of 1 checked" out of a
+    six-store search, which reads as though we barely looked. Every store we
+    checked should appear, with an explicit answer.
+    """
+    indexed = db.indexed_store_ids(conn, [s["store_id"] for s in store_list])
+    have = {(r["store_id"], str(r.get("sku"))) for r in rows}
+    out = list(rows)
+
+    for v in targets:
+        sku = str(v.get("sku") or "")
+        if not sku:
+            continue
+        for s in store_list:
+            if (s["store_id"], sku) in have:
+                continue
+            known = s["store_id"] in indexed
+            out.append({
+                "scraped_at": None,
+                "store_id": s["store_id"],
+                "store_name": s.get("name", ""),
+                "city": s.get("city", ""),
+                "province": s.get("province", ""),
+                "distance_km": s.get("distance_km"),
+                "sku": sku,
+                "handle": v.get("handle", ""),
+                "title": v.get("title", ""),
+                "brand": v.get("brand", ""),
+                "category": v.get("category", ""),
+                "size": v.get("size", ""),
+                "price": None, "member_price": None,
+                "api_stock": 0 if known else None,
+                "api_elite_price": None, "api_member_price": None,
+                "is_elite": None,
+                "available": 0,
+                "carried": 0 if known else None,
+                "stock_text": "Not in stock" if known else "Not checked",
+                "status": "ok",
+            })
+    return out
+
+
+def tier_price(row: dict) -> tuple[str, float | None]:
+    """Which discount tier applies, and what it costs.
+
+    A product is either ELITE-tier or Member-tier, never both: the site shows
+    the member price only when is_elite is false, and the ELITE price only when
+    it is true. So there is no elite-vs-member delta per product -- the useful
+    comparison is tier price vs market price.
+    """
+    elite = row.get("api_elite_price")
+    member = row.get("member_price") or row.get("api_member_price")
+    if row.get("is_elite") and elite:
+        return "ELITE", elite
+    if member:
+        return "member", member
+    if elite:                      # is_elite unknown (older rows)
+        return "ELITE", elite
+    return "-", None
+
+
+def tier_note(row: dict) -> str:
+    """A one-line flag for ELITE-only products."""
+    if row.get("is_elite"):
+        return "   *** ELITE members only — no Cabana Club price ***"
+    return ""
+
+
+async def compare_backends(store_list, targets) -> int:
+    """Run both backends over the same stores and diff the answers.
+
+    The API returning another store's numbers, or stale stock, would look
+    completely normal in the output -- this is the only thing that would catch
+    it. Writes nothing to the database.
+    """
+    FIELDS = ["price", "member_price", "api_stock", "carried", "available"]
+
+    print(f"\nComparing backends over {len(store_list)} store(s), "
+          f"{len(targets)} product(s). Nothing will be saved.\n")
+
+    results: dict[str, dict] = {}
+    for backend in ("browser", "api"):
+        print(f"--- {backend} ---")
+        t0 = time.time()
+        async with fetchers.get_fetcher(backend) as f:
+            for i, st in enumerate(store_list, 1):
+                try:
+                    for r in await f.fetch(st, targets, verbose=False):
+                        results.setdefault((r["store_id"], r["sku"]), {})[backend] = r
+                except Exception as e:                      # noqa: BLE001
+                    print(f"    {st['name']}: FAILED {type(e).__name__}: {e}")
+                if i < len(store_list) and not getattr(f, "paces_itself", False):
+                    await asyncio.sleep(random.uniform(*config.DELAY_RANGE))
+        print(f"    {time.time() - t0:.1f}s\n")
+
+    diffs = compared = 0
+    skipped: list[str] = []
+
+    for (sid, sku), got in sorted(results.items()):
+        a, b = got.get("browser"), got.get("api")
+        if not a or not b:
+            skipped.append(f"{sid}/{sku}: only {'browser' if a else 'api'} returned")
+            continue
+
+        # A row that errored holds no data to compare -- counting it as a
+        # disagreement would blame the wrong backend. Report separately.
+        failed = [n for n, r in (("browser", a), ("api", b))
+                  if r.get("status") != "ok"]
+        if failed:
+            skipped.append(f"{a['store_name']} ({sid}) sku {sku}: "
+                           f"{'+'.join(failed)} errored "
+                           f"({(a if 'browser' in failed else b).get('error','')[:48]})")
+            continue
+
+        compared += 1
+        bad = [f for f in FIELDS if (a.get(f) or 0) != (b.get(f) or 0)]
+        if bad:
+            diffs += 1
+            print(f"  {a['store_name']} ({sid}) sku {sku}:")
+            for f in bad:
+                print(f"      {f:<14} browser={a.get(f)!r:<12} api={b.get(f)!r}")
+
+    if skipped:
+        print(f"\n  {len(skipped)} row(s) not comparable (a backend failed):")
+        for s in skipped:
+            print(f"      {s}")
+
+    print("\n" + "=" * 74)
+    if diffs:
+        print(f"{diffs} disagreement(s) across {compared} comparable row(s). "
+              f"Do NOT switch the default until these are understood.")
+    else:
+        print(f"No disagreements across {compared} comparable row(s). "
+              f"The API backend matches the browser exactly.")
+    return 1 if diffs else 0
+
+
 def show_results(rows: list[dict], age: float | None, args, targets,
-                 location_label: str = "", live: bool = True, conn=None) -> None:
+                 location_label: str = "", live: bool = True, conn=None,
+                 checked: int | None = None) -> None:
     """Print the ranked answer, then build the HTML report."""
     rows = sorted(rows, key=lambda r: (
         str(r.get("sku")),
@@ -250,33 +433,42 @@ def show_results(rows: list[dict], age: float | None, args, targets,
     print("\n" + "-" * 74)
     if have:
         show_dist = any(r.get("distance_km") is not None for r in have)
-        print(f"IN STOCK at {len(have)} of {len(rows)} store(s) checked:\n")
+        # Count stores we looked at, not rows we got back -- the index omits
+        # stores where an item is out of stock, so len(rows) understates it.
+        n_checked = checked if checked is not None else len(rows)
+        print(f"IN STOCK at {len(have)} of {n_checked} store(s) checked:\n")
         hdr = f"  {'units':>5}  {'store':<26} {'city':<16}"
         if show_dist:
             hdr += f" {'km':>6}"
-        print(hdr + f" {'price':>8} {'member':>8}")
+        print(hdr + f" {'market':>8} {'tier':>6} {'you pay':>8} {'save':>13}")
         last = None
         for r in have:
             if r.get("sku") != last:
-                print(f"\n  {r.get('title')} ({r.get('size')})  [SKU {r.get('sku')}]")
+                print(f"\n  {r.get('title')} ({r.get('size')})  [SKU {r.get('sku')}]"
+                      + tier_note(r))
                 last = r.get("sku")
             d = (f" {r['distance_km']:>6.1f}"
                  if show_dist and r.get("distance_km") is not None
                  else (" " * 7 if show_dist else ""))
-            price = f"${r['price']:.2f}" if r.get("price") else "-"
-            memb = f"${r['member_price']:.2f}" if r.get("member_price") else "-"
+            market = r.get("price")
+            label, deal = tier_price(r)
+            saving = ""
+            if market and deal and deal < market:
+                saving = f"-${market - deal:.2f} ({100*(market-deal)/market:.0f}%)"
             print(f"  {r.get('api_stock') if r.get('api_stock') is not None else '?':>5}"
                   f"  {str(r.get('store_name'))[:26]:<26} {str(r.get('city'))[:16]:<16}"
-                  f"{d} {price:>8} {memb:>8}")
+                  f"{d} {('$%.2f' % market) if market else '-':>8}"
+                  f" {label:>6} {('$%.2f' % deal) if deal else '-':>8} {saving:>13}")
     else:
-        checked = len(rows)
-        print(f"NOT IN STOCK at any of the {checked} store(s) checked."
-              + ("" if checked > 5 else "  Try --top 25 to widen the search."))
+        n_checked = checked if checked is not None else len(rows)
+        print(f"NOT IN STOCK at any of the {n_checked} store(s) checked."
+              + ("" if n_checked > 5 else "  Try --top 25 to widen the search."))
 
-    if not args.no_report and rows:
+    if not args.no_report:
         q = " ".join(args.product) if args.product else "watchlist"
         path = report.write_and_open(rows, query=q, age_hours=age,
-                                     location=location_label)
+                                     location=location_label,
+                                     checked=checked)
         print(f"\nReport: {path}")
 
 

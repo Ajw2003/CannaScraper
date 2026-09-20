@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Where's it in stock?</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1c1b19; --mut:#6b6864; --line:#e5e1db; --card:#fff;
+  --ok:#1a7f4b; --okbg:#e8f5ee; --low:#a8650a; --lowbg:#fdf2e2; --none:#8a8681;
+  --accent:#1a7f4b; --elite:#7a5a12; --elitebg:#f3e6c8;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#171614; --fg:#f0eee9; --mut:#a09c96; --line:#302e2a; --card:#201f1c;
+  --ok:#5cc98d; --okbg:#14301f; --low:#e0a34a; --lowbg:#33260f; --none:#7a7671;
+  --accent:#5cc98d; --elite:#e6c88a; --elitebg:#3a2f12;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  padding:20px 16px 80px}
+.wrap{max-width:760px;margin:0 auto}
+h1{font-size:20px;margin:0 0 14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input[type=search],select{
+  font:inherit;padding:11px 13px;border:1px solid var(--line);border-radius:9px;
+  background:var(--card);color:var(--fg);width:100%}
+input[type=search]:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{font:inherit;padding:10px 15px;border:1px solid var(--line);border-radius:9px;
+  background:var(--card);color:var(--fg);cursor:pointer;white-space:nowrap}
+button:hover{border-color:var(--mut)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+.controls{margin:10px 0 18px;gap:8px}
+.controls select{width:auto;flex:1;min-width:120px}
+.muted{color:var(--mut);font-size:13px}
+.chk{display:inline-flex;align-items:center;gap:8px;font-size:13px;
+  color:var(--mut);cursor:pointer;margin:-8px 0 16px;user-select:none}
+.chk input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.chk:hover{color:var(--fg)}
+.pot{display:inline-block;font-size:11.5px;color:var(--mut);
+  border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:6px;
+  white-space:nowrap}
+.sold{color:var(--none);font-size:11px;text-transform:uppercase;
+  letter-spacing:.04em;margin-left:6px}
+
+/* product picker */
+.plist{display:grid;gap:8px;margin-top:14px}
+.p{display:flex;gap:12px;align-items:center;padding:9px;border:1px solid var(--line);
+  border-radius:10px;background:var(--card);cursor:pointer;text-align:left;width:100%}
+.p:hover{border-color:var(--accent)}
+.p img{width:46px;height:46px;object-fit:contain;border-radius:6px;flex:none;
+  background:#0001}
+.p .t{font-weight:600;font-size:14px;line-height:1.3}
+.p .s{color:var(--mut);font-size:12.5px}
+
+/* results */
+.hero{display:flex;gap:14px;align-items:center;margin:6px 0 4px}
+.hero img{width:64px;height:64px;object-fit:contain;border-radius:8px;background:#0001}
+.hero h2{margin:0;font-size:17px}
+.summary{margin:10px 0 14px;font-size:14px}
+.big{font-size:22px;font-weight:700;color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;
+  overflow:hidden}
+.r{display:flex;align-items:center;gap:12px;padding:12px 14px;
+  border-bottom:1px solid var(--line)}
+.r:last-child{border-bottom:0}
+.r.out{opacity:.5}
+.r .qty{flex:none;min-width:62px}
+.r .who{flex:1;min-width:0}
+.r .who b{display:block;font-size:14.5px}
+.r .who span{color:var(--mut);font-size:12.5px}
+.r .pr{text-align:right;flex:none;font-variant-numeric:tabular-nums}
+.r .pr b{display:block}
+.r .pr s{color:var(--mut);font-size:12px}
+.r .pr em{color:var(--ok);font-style:normal;font-size:12px;display:block}
+.pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700}
+.ok{background:var(--okbg);color:var(--ok)}
+.low{background:var(--lowbg);color:var(--low)}
+.no{color:var(--none);font-size:12.5px}
+.elite{background:var(--elitebg);color:var(--elite);font-size:11px;
+  text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:20px;
+  margin-left:6px;white-space:nowrap}
+.bar{height:5px;background:var(--line);border-radius:4px;overflow:hidden;margin:10px 0 4px}
+.bar>i{display:block;height:100%;background:var(--accent);width:0;
+  transition:width .25s ease}
+.empty{padding:22px 14px;color:var(--mut);text-align:center}
+.hide{display:none}
+a.src{color:var(--mut);font-size:12px;text-decoration:none}
+a.src:hover{text-decoration:underline}
+
+/* catalogue index panel */
+.panel{border:1px solid var(--line);border-radius:11px;background:var(--card);
+  margin:0 0 14px;overflow:hidden}
+.panel>summary{padding:11px 14px;cursor:pointer;display:flex;gap:9px;
+  align-items:baseline;font-weight:600;font-size:14px;list-style:none}
+.panel>summary::-webkit-details-marker{display:none}
+.panel>summary::before{content:"\25B8";color:var(--mut);font-weight:400}
+.panel[open]>summary::before{content:"\25BE"}
+.panel>summary:hover{background:var(--bg)}
+.panel>summary .muted{font-weight:400}
+.idx{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  padding:10px 14px;border-top:1px solid var(--line)}
+.idx .who{flex:1;min-width:160px}
+.idx .who b{display:block;font-size:14px}
+.idx .who span{color:var(--mut);font-size:12.5px}
+.idx .act{display:flex;gap:6px;flex:none}
+.idx .bar{flex-basis:100%;margin:0}
+.idx .prog{flex-basis:100%;color:var(--mut);font-size:12.5px;
+  font-variant-numeric:tabular-nums}
+button.small{padding:6px 11px;font-size:13px}
+.note{padding:10px 14px;border-top:1px solid var(--line);
+  color:var(--mut);font-size:12.5px}
+#unlock{padding:10px 14px;border-top:1px solid var(--line);gap:8px;
+  align-items:center}
+#unlock input{flex:1;min-width:150px;font:inherit;padding:9px 12px;
+  border:1px solid var(--line);border-radius:9px;background:var(--bg);
+  color:var(--fg)}
+a.idxlink{color:var(--accent);cursor:pointer}
+#buildnote{border:1px solid var(--low);border-radius:9px;background:var(--lowbg);
+  color:var(--low);padding:9px 13px;margin-bottom:10px;font-size:13px}
+#buildnote button{margin-left:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Where's it in stock?</h1>
+
+  <div id="buildnote" class="hide"></div>
+
+  <details class="panel" id="idxpanel">
+    <summary>Catalogue index <span class="muted" id="idxsum">checking…</span></summary>
+    <div id="idxrows"></div>
+    <div class="row hide" id="unlock">
+      <input type="password" id="pw" placeholder="Admin password"
+             autocomplete="current-password">
+      <button class="primary small" id="pwgo">Unlock</button>
+      <span class="muted" id="pwmsg"></span>
+    </div>
+    <div class="note" id="idxnote">
+      A rebuild re-reads every store in the province, one at a time, to stay
+      under the site's rate limit. Searching is open to anyone with the link;
+      rebuilding needs the password.
+      <div id="ratenote" style="margin-top:6px"></div>
+    </div>
+  </details>
+
+  <input type="search" id="q" placeholder="Search a product…  e.g. grape gas"
+         autocomplete="off" autofocus>
+
+  <div class="muted" id="catnote" style="margin:6px 0 2px"></div>
+
+  <div class="row controls">
+    <select id="prov" title="Province"></select>
+    <select id="cat" title="Category"><option value="">All categories</option></select>
+    <select id="top">
+      <option value="5">5 nearest</option>
+      <option value="10" selected>10 nearest</option>
+      <option value="25">25 nearest</option>
+      <option value="all">Whole province</option>
+    </select>
+    <select id="sort" title="How to order the stores">
+      <option value="distance" selected>Closest first</option>
+      <option value="stock">Most stock first</option>
+    </select>
+    <select id="src" title="Where the answer comes from">
+      <option value="index" selected>Index (instant)</option>
+      <option value="api">Live: fast API</option>
+      <option value="browser">Live: real browser</option>
+    </select>
+  </div>
+  <div class="row controls" id="nearrow">
+    <input type="search" id="near" placeholder="Near which city or postal code?"
+           autocomplete="off" style="flex:1;min-width:180px">
+    <button id="loc" title="Use my device location">📍</button>
+    <span class="muted" id="locinfo"></span>
+  </div>
+  <label class="chk"><input type="checkbox" id="stocked" checked>
+    <span>Only products in stock somewhere in this province</span></label>
+
+  <div id="plist" class="plist"></div>
+  <div id="more"></div>
+  <div id="out"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let coords = null, current = null, timer = null;
+
+function money(v){ return (v || v === 0) ? '$' + Number(v).toFixed(2) : '—'; }
+
+// ---- product search (debounced) ------------------------------------------
+$('#q').addEventListener('input', e => {
+  clearTimeout(timer);
+  const q = e.target.value.trim();
+  if (q.length < 2) { $('#plist').innerHTML = ''; $('#more').innerHTML = ''; return; }
+  timer = setTimeout(() => search(q), 180);
+});
+
+const PAGE = 50;
+
+function card(p){
+  return `<button class="p" data-sku="${p.sku}">
+      ${p.image ? `<img src="${p.image}" alt="" loading="lazy">`
+                : '<div class="p-img"></div>'}
+      <div><div class="t">${esc(p.title)}${p.in_stock === false ? '<span class="sold">none in province</span>' : ''}</div>
+      <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}${
+        p.thc ? `<span class="pot">THC ${esc(p.thc)}</span>` : ''}${
+        p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}</div></div>
+    </button>`;
+}
+
+function wireCards(){
+  document.querySelectorAll('.p').forEach(b =>
+    b.onclick = () => load(b.dataset.sku));
+}
+
+async function search(q, offset = 0){
+  const sp = new URLSearchParams({q, limit: PAGE, offset,
+    province: $('#prov').value, stocked_only: $('#stocked').checked,
+    category: $('#cat').value});
+  // A failed search used to render nothing at all -- no results and no
+  // message -- which is indistinguishable from "nothing matched" and reads as
+  // the search being broken. Say what happened instead.
+  let r, d;
+  try{
+    r = await fetch('/api/search?' + sp);
+    d = await r.json();
+  }catch(e){
+    return searchError('Could not reach the server. Is the app still running?');
+  }
+  if (!r.ok){
+    return searchError((d && d.error)
+      || `Search failed (HTTP ${r.status}).`);
+  }
+
+  if (!d.total){
+    $('#plist').innerHTML = `<div class="muted">${d.hidden
+      ? `No matches in stock in ${esc(d.province)} — ${d.hidden} matched but are
+         out everywhere. Untick the filter to see them.`
+      : 'Nothing matched that.'}</div>`;
+    $('#more').innerHTML = ''; return;
+  }
+
+  const html = d.products.map(card).join('');
+  if (offset === 0) $('#plist').innerHTML = html;
+  else $('#plist').insertAdjacentHTML('beforeend', html);
+  wireCards();
+
+  // Say how many matched, and offer the rest -- never truncate in silence.
+  const shown = offset + d.products.length;
+  const note = d.hidden
+    ? ` · ${d.hidden} hidden (not stocked in ${esc(d.province)})` : '';
+  $('#more').innerHTML = shown < d.total
+    ? `<div class="muted" style="margin:10px 0 4px">Showing ${shown} of ${d.total}${note}</div>
+       <button id="moreb">Show ${Math.min(PAGE, d.total - shown)} more</button>`
+    : ((d.total > PAGE || d.hidden)
+        ? `<div class="muted" style="margin:10px 0">All ${d.total} shown${note}</div>` : '');
+  const mb = $('#moreb');
+  if (mb) mb.onclick = () => { mb.disabled = true; search(q, shown); };
+}
+
+function searchError(msg){
+  $('#plist').innerHTML = `<div class="muted">${esc(msg)}</div>`;
+  $('#more').innerHTML = '';
+  loadCatalog();
+}
+
+function esc(s){ return (s||'').replace(/[<>&"]/g,
+  c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+// ---- provinces ------------------------------------------------------------
+(async function provinces(){
+  let d;
+  try{ d = await (await fetch('/api/provinces')).json(); }
+  catch(e){ return searchError('Could not reach the server.'); }
+  $('#prov').innerHTML = d.provinces.map(p =>
+    `<option value="${esc(p.name)}"${p.name === d.default ? ' selected' : ''}>
+       ${esc(p.name)} (${p.stores})</option>`).join('');
+  if (d.home && typeof d.home === 'string') $('#near').placeholder = d.home;
+  loadCats();
+})();
+
+// ---- categories -----------------------------------------------------------
+async function loadCats(){
+  const keep = $('#cat').value;
+  const sp = new URLSearchParams({province: $('#prov').value,
+                                  stocked_only: $('#stocked').checked});
+  // The category list is a nicety; losing it must not take search with it.
+  let d;
+  try{
+    const r = await fetch('/api/categories?' + sp);
+    if (!r.ok) return;
+    d = await r.json();
+  }catch(e){ return; }
+  $('#cat').innerHTML = '<option value="">All categories</option>' +
+    d.categories.map(c =>
+      `<option value="${esc(c.name)}"${c.name === keep ? ' selected' : ''}>
+         ${esc(c.name)} (${c.skus})</option>`).join('');
+}
+$('#cat').onchange = () => rerun();
+
+// ---- product catalogue ----------------------------------------------------
+// The catalogue is the list of products that exist at all; the index is where
+// they are in stock. Search reads the catalogue straight off disk and never
+// waits on a download, so a stale one still answers -- but say how old it is,
+// and offer to top it up.
+let catTimer = null, catWasBusy = false;
+
+async function loadCatalog(){
+  let d;
+  try{ d = await (await fetch('/api/catalog/status')).json(); }
+  catch(e){ return; }
+
+  const btn = `<button class="small" id="catgo">Refresh catalogue</button>`;
+  if (!d.ok){
+    $('#catnote').innerHTML =
+      `<b>The product catalogue could not be read.</b> ${btn}`;
+  } else if (d.job){
+    $('#catnote').innerHTML = `Refreshing the catalogue…`;
+  } else if (d.last_error){
+    $('#catnote').innerHTML = `${d.variants} products · catalogue updated `
+      + `${fmtAge(d.age_hours)} — last refresh failed `
+      + `(${esc(d.last_error)}). ${btn}`;
+  } else if (d.stale){
+    $('#catnote').innerHTML = `${d.variants} products · catalogue updated `
+      + `${fmtAge(d.age_hours)} — search still works. ${btn}`;
+  } else {
+    $('#catnote').innerHTML = `${d.variants} products · catalogue updated `
+      + `${fmtAge(d.age_hours)}. ${btn}`;
+  }
+
+  const go = $('#catgo');
+  if (go) go.onclick = async () => {
+    go.disabled = true;
+    const r = await post('/api/catalog/refresh');
+    if (!r) { go.disabled = false; return; }        // 401 opened the unlock box
+    if (!r.ok){
+      const e = await r.json().catch(() => ({}));
+      $('#catnote').textContent = e.error || 'Could not start the refresh.';
+      return;
+    }
+    loadCatalog();
+  };
+
+  // Poll only while one is actually running.
+  clearTimeout(catTimer);
+  if (d.job) catTimer = setTimeout(loadCatalog, 3000);
+
+  // A refresh that just landed brought new products in; show them without
+  // making anyone retype.
+  if (catWasBusy && !d.job){ loadCats(); rerun(); }
+  catWasBusy = !!d.job;
+}
+
+// ---- build status -----------------------------------------------------
+// A packaged build that predates the fix its own source now has looks
+// identical to a working one from the outside -- typing into search just
+// quietly does nothing. Say when that is true, and offer to fix it without
+// anyone having to find a terminal.
+let buildRebuilding = false;
+
+async function loadBuild(){
+  const note = $('#buildnote');
+  let d;
+  try{ d = await (await fetch('/api/build/status')).json(); }
+  catch(e){
+    // Expected while the old process is exiting and the new one is starting;
+    // that is the whole point of a rebuild. Keep polling until it answers.
+    if (buildRebuilding){
+      note.className = '';
+      note.innerHTML = `Rebuilding and restarting… this can take a few `
+        + `minutes. This page will come back on its own.`;
+      setTimeout(loadBuild, 3000);
+    }
+    return;
+  }
+
+  if (buildRebuilding && !d.stale){
+    // The new build landed and is no longer stale -- the rebuild is done and
+    // this note has done its job. Reload once so the fresh frontend takes
+    // over completely, not just this banner.
+    location.reload();
+    return;
+  }
+  if (!d.frozen || !d.stale){
+    note.className = 'hide';
+    return;
+  }
+
+  const age = d.age_hours >= 48 ? `${Math.round(d.age_hours / 24)} days old`
+                                 : `${Math.round(d.age_hours)}h old`;
+  const btn = d.rebuildable
+    ? `<button class="small" id="buildgo">Rebuild and restart</button>`
+    : '';
+  note.className = '';
+  note.innerHTML = `<b>This build is ${age} and the source has changed since`
+    + `${d.changed ? ` (${esc(d.changed)} is newer)` : ''}.</b> `
+    + `Search may be missing fixes already made on the branch. ${btn}`;
+
+  const go = $('#buildgo');
+  if (go) go.onclick = async () => {
+    go.disabled = true;
+    const r = await post('/api/build/rebuild');
+    if (!r) { go.disabled = false; return; }        // 401 opened the unlock box
+    if (!r.ok){
+      const e = await r.json().catch(() => ({}));
+      note.textContent = e.error || 'Could not start the rebuild.';
+      return;
+    }
+    buildRebuilding = true;
+    loadBuild();
+  };
+}
+
+// ---- geolocation ----------------------------------------------------------
+$('#loc').onclick = () => {
+  if (!navigator.geolocation){ $('#locinfo').textContent = 'not supported'; return; }
+  $('#locinfo').textContent = 'locating…';
+  navigator.geolocation.getCurrentPosition(
+    p => { coords = [p.coords.latitude, p.coords.longitude];
+           $('#near').value = '';                 // device location wins
+           $('#locinfo').textContent = 'using your location';
+           if (current) load(current); },
+    // Browsers only allow geolocation on https or localhost, so over plain
+    // http from a phone this will refuse -- say so instead of failing silently.
+    e => { $('#locinfo').textContent = e.code === 1
+             ? 'blocked — type a city instead' : 'unavailable — type a city'; });
+};
+
+// Typing a place overrides the device location.
+$('#near').addEventListener('change', () => {
+  if ($('#near').value.trim()){ coords = null; $('#locinfo').textContent = ''; }
+  if (current) load(current);
+});
+$('#near').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && current) load(current);
+});
+$('#top').onchange = () => { if (current) load(current); };
+$('#prov').onchange = () => { loadCats(); rerun(); if (current) load(current); };
+$('#stocked').onchange = () => { loadCats(); rerun(); };
+function rerun(){
+  const q = $('#q').value.trim();
+  if (q.length >= 2) search(q);
+}
+$('#src').onchange  = () => { if (current) load(current); };
+$('#sort').onchange = () => { if (current) load(current); };
+
+// Location applies to every scope now: "Whole province" simply drops the
+// count limit, it still ranks by distance. So the location row always shows.
+
+// ---- results --------------------------------------------------------------
+function params(sku){
+  const p = new URLSearchParams({sku});
+  const t = $('#top').value;
+  if (t === 'all') p.set('all_stores', 'true'); else p.set('top', t);
+  p.set('sort', $('#sort').value);
+  const prov = $('#prov').value;
+  if (prov) p.set('province', prov);
+  const near = $('#near').value.trim();
+  if (coords){ p.set('lat', coords[0]); p.set('lng', coords[1]); }
+  else if (near){ p.set('near', near); }
+  return p;
+}
+
+async function load(sku){
+  current = sku;
+  $('#plist').innerHTML = ''; $('#more').innerHTML = '';
+  $('#out').innerHTML = '<div class="muted">Loading…</div>';
+  const r = await fetch('/api/results?' + params(sku));
+  if (!r.ok){ $('#out').innerHTML = '<div class="muted">Not found.</div>'; return; }
+  render(await r.json());
+}
+
+function age(h){
+  if (h === null || h === undefined) return 'no data yet';
+  if (h < 1/60) return 'just now';
+  if (h < 1) return Math.round(h*60) + ' min ago';
+  if (h < 24) return h.toFixed(1) + ' h ago';
+  return (h/24).toFixed(1) + ' days ago';
+}
+
+// Never say "no data" when the stores were in fact checked and simply don't
+// stock the item -- that is an answer, and the commonest case for a full
+// province sweep.
+function status(d){
+  const cov = d.indexed_stores || 0, checked = d.checked || 0;
+  const bits = [];
+
+  if (cov >= checked && checked)
+    bits.push(`<span class="ok pill">indexed</span> all ${checked} stores · ${age(d.index_age_hours)}`);
+  else if (cov)
+    bits.push(`<span class="low pill">partly indexed</span> ${cov} of ${checked} stores · ${age(d.index_age_hours)}`);
+  else
+    bits.push(`<span class="no">not indexed yet — <a class="idxlink">build the index</a>, or use a live check</span>`);
+
+  if (d.age_hours !== null && d.age_hours !== undefined)
+    bits.push(`this product last checked ${age(d.age_hours)}`);
+  else if (cov)
+    bits.push(`not stocked at any of them`);
+
+  return `<span class="muted">${bits.join(' · ')}</span>`;
+}
+
+function render(d){
+  const p = d.product, inS = d.in_stock;
+  const rows = d.results.map(r => {
+    const q = r.qty;
+    const stock = !r.available
+      ? `<span class="no">${r.stock_text === 'Not checked' ? 'not checked'
+                                                           : 'not in stock'}</span>`
+      : (q === null ? '<span class="pill ok">in stock</span>'
+                    : `<span class="pill ${q >= 5 ? 'ok' : 'low'}">${q} ${q===1?'unit':'units'}</span>`);
+    const dist = r.distance_km !== null && r.distance_km !== undefined
+      ? `${r.distance_km.toFixed(1)} km` : '';
+    const save = r.save ? `<em>save $${r.save.amount.toFixed(2)} (${r.save.pct}%)</em>` : '';
+    const priced = r.available
+      ? `<b>${money(r.tier_price ?? r.market)}</b>
+         ${r.tier_price && r.market && r.tier_price < r.market
+            ? `<s>${money(r.market)}</s>` : ''}${save}` : '';
+    return `<div class="r ${r.available ? '' : 'out'}">
+      <div class="qty">${stock}</div>
+      <div class="who"><b>${esc(r.store)}</b><span>${esc(r.city)}${dist ? ' · ' + dist : ''}</span></div>
+      <div class="pr">${priced}</div></div>`;
+  }).join('');
+
+  const hidden = d.results.length - inS;
+  $('#out').innerHTML = `
+    <div class="hero">
+      ${p.image ? `<img src="${p.image}" alt="">` : ''}
+      <div><h2>${esc(p.title)}${d.results.some(r=>r.is_elite)
+          ? '<span class="elite">Elite only</span>' : ''}</h2>
+        <div class="muted">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category || '')} · SKU ${esc(p.sku)}${
+          p.thc ? `<span class="pot">THC ${esc(p.thc)}</span>` : ''}${
+          p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}</div></div>
+    </div>
+    <div class="summary">
+      <span class="big">${inS}</span> of ${d.checked} stores have it
+      <span class="muted">· ${esc(d.scope)}</span>
+      <div style="margin-top:5px">${status(d)}</div>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <button class="primary" id="refresh">${
+        $('#src').value === 'index' ? 'Reload from index'
+          : `Check live now (${liveCost(d.checked)})`}</button>
+      ${hidden ? `<button id="toggle">Show ${hidden} without it</button>` : ''}
+    </div>
+    <div id="prog" class="hide"><div class="bar"><i></i></div>
+      <div class="muted" id="progtxt"></div></div>
+    <div class="card">${rows || '<div class="empty">No stores checked.</div>'}</div>`;
+
+  // Out-of-stock rows are present but hidden until asked for.
+  let shown = false;
+  const outs = () => document.querySelectorAll('.r.out');
+  outs().forEach(el => el.classList.add('hide'));
+  const tg = $('#toggle');
+  if (tg) tg.onclick = () => {
+    shown = !shown;
+    outs().forEach(el => el.classList.toggle('hide', !shown));
+    tg.textContent = shown ? `Hide ${hidden} without it` : `Show ${hidden} without it`;
+  };
+  $('#refresh').onclick = refresh;
+}
+
+// ---- live re-check --------------------------------------------------------
+async function refresh(){
+  if ($('#src').value === 'index'){ load(current); return; }
+  const btn = $('#refresh');
+  btn.disabled = true;
+  btn.textContent = $('#src').value === 'browser'
+    ? 'Checking (browser, slow)…' : 'Checking…';
+  $('#prog').classList.remove('hide');
+  const p = params(current); p.set('fetcher', $('#src').value);
+  const r = await fetch('/api/refresh?' + p, {method:'POST'});
+
+  // A live check spends the shared rate limit and sends traffic from the host
+  // machine, so it is one of the password-gated actions.
+  if (r.status === 401){
+    btn.disabled = false; btn.textContent = 'Check live now';
+    $('#prog').classList.add('hide');
+    showUnlock(() => $('#refresh').click(), 'Password needed for a live check.');
+    return;
+  }
+  if (!r.ok){
+    const e = await r.json().catch(() => ({}));
+    btn.disabled = false; btn.textContent = 'Check live now';
+    $('#progtxt').textContent = e.error || 'Could not start that check.';
+    return;
+  }
+  const {job, total} = await r.json();
+
+  const poll = setInterval(async () => {
+    const s = await (await fetch('/api/job/' + job)).json();
+    $('.bar > i').style.width = (100 * s.done / (s.total || 1)) + '%';
+    if (s.state === 'queued'){
+      // One worker, one job at a time. Without this the bar sits at zero and
+      // reads as a hang.
+      $('#progtxt').textContent =
+        'Queued — a province rebuild is using the connection';
+    } else {
+      const eta = (s.eta_min === null || s.eta_min === undefined || !s.done)
+        ? '' : ` · ~${Math.max(0, Math.round(s.eta_min))}m left`;
+      $('#progtxt').textContent =
+        `${s.done} of ${s.total}${s.store ? ' · ' + s.store : ''}${eta}`;
+    }
+    if (s.finished){
+      clearInterval(poll);
+      $('#progtxt').textContent = s.error ? 'Some stores failed: ' + s.error : 'Done.';
+      setTimeout(() => load(current), 400);
+    }
+  }, 500);
+}
+
+// ---- what this installation can do ----------------------------------------
+let isAdmin = false, secPerStore = 2.2;
+
+// One live check costs one request per store, and that endpoint answers in
+// about ten seconds. Say so on the button rather than letting someone start a
+// hundred-store sweep and wonder why nothing is happening.
+function liveCost(stores){
+  const s = Math.round((stores || 0) * secPerStore);
+  if (s < 60) return `${stores} stores, ~${s}s`;
+  return `${stores} stores, ~${Math.round(s / 60)} min`;
+}
+
+(async function caps(){
+  try{
+    const c = await (await fetch('/api/capabilities')).json();
+    isAdmin = !!c.admin;
+    if (c.live_seconds_per_store) secPerStore = c.live_seconds_per_store;
+    // The packaged app ships without Playwright. Offering a source that
+    // cannot run is worse than not offering it.
+    if (!c.playwright){
+      const opt = $('#src').querySelector('option[value="browser"]');
+      if (opt) opt.remove();
+    }
+  }catch(e){ /* the index panel reports the outage */ }
+})();
+
+// ---- unlocking -------------------------------------------------------------
+// Reading is open to anyone with the link. Anything that makes this machine
+// talk to the site is not, so a 401 opens this rather than failing silently.
+let afterUnlock = null;
+
+function showUnlock(retry, msg){
+  afterUnlock = retry || null;
+  $('#idxpanel').open = true;
+  $('#unlock').classList.remove('hide');
+  $('#pwmsg').textContent = msg || 'Password needed for that.';
+  $('#pw').focus();
+}
+
+$('#pwgo').onclick = async () => {
+  const pw = $('#pw').value;
+  if (!pw) return;
+  $('#pwgo').disabled = true;
+  $('#pwmsg').textContent = 'Checking…';
+  let r;
+  try{
+    r = await fetch('/api/login', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({password: pw})});
+  }catch(e){
+    $('#pwgo').disabled = false;
+    $('#pwmsg').textContent = 'Could not reach the server.';
+    return;
+  }
+  $('#pwgo').disabled = false;
+  if (r.ok){
+    isAdmin = true;
+    $('#pw').value = '';
+    $('#unlock').classList.add('hide');
+    $('#pwmsg').textContent = '';
+    const go = afterUnlock; afterUnlock = null;
+    if (go) go();
+    loadIndex();
+  } else {
+    const d = await r.json().catch(() => ({}));
+    $('#pwmsg').textContent = d.error || 'Wrong password.';
+  }
+};
+$('#pw').addEventListener('keydown',
+  e => { if (e.key === 'Enter') $('#pwgo').click(); });
+
+async function post(url){
+  const r = await fetch(url, {method:'POST'});
+  if (r.status === 401){ showUnlock(() => post(url)); return null; }
+  return r;
+}
+
+// ---- catalogue index -------------------------------------------------------
+let idxTimer = null, wasBusy = false;
+
+function fmtAge(h){
+  if (h === null || h === undefined) return 'never';
+  if (h < 1) return Math.round(h * 60) + ' min ago';
+  if (h < 24) return h.toFixed(1) + ' h ago';
+  return (h / 24).toFixed(1) + ' days ago';
+}
+
+// Whatever is occupying the single worker right now, if anything.
+let running = null;
+
+function idxRow(p){
+  const j = p.job, prov = esc(p.province);
+  const cover = p.indexed
+    ? `indexed ${p.indexed}/${p.stores} · ${fmtAge(p.age_hours)}`
+    : 'never indexed';
+  let act, prog = '';
+
+  if (j){
+    // A resumed run only counts the stores it still has to reach, so show the
+    // skipped ones too -- "3 of 6" on an 8-store province is otherwise just
+    // baffling.
+    const skipped = j.resumed || 0;
+    const whole = j.total + skipped;
+    const pct = whole ? Math.round(100 * (j.done + skipped) / whole) : 0;
+    const eta = (j.eta_min === null || j.eta_min === undefined)
+      ? '' : ` · ETA ${Math.max(0, Math.round(j.eta_min))}m`;
+    let line;
+    if (j.state === 'queued'){
+      line = running && running.id !== j.id
+        ? `Queued behind ${esc(running.label)} — ${running.done} of ${running.total} done`
+        : 'Queued';
+    } else if (skipped){
+      line = `Resuming · ${j.done + skipped} of ${whole} (${skipped} already done)`
+           + `${j.current ? ' · ' + esc(j.current) : ''}${eta}`;
+    } else {
+      line = `${j.done} of ${j.total}${j.current ? ' · ' + esc(j.current) : ''}${eta}`;
+    }
+    act = `<button class="small" data-act="cancel" data-prov="${prov}">Cancel</button>`;
+    prog = `<div class="bar"><i style="width:${pct}%"></i></div>
+            <div class="prog">${line}</div>`;
+  } else if (p.incomplete){
+    // A run that stopped early can pick up where it left off, which on
+    // Ontario is the difference between 10 minutes and 49. Both buttons are
+    // labelled with what they actually do -- a bare "Resume" sitting where
+    // "Refresh" normally sits gets clicked by reflex.
+    const left = Math.max(0, p.stores - p.last_run_stores);
+    act = `<button class="small primary" data-act="resume" data-prov="${prov}"
+             >Resume (${left} left)</button>
+           <button class="small" data-act="refresh" data-prov="${prov}"
+             >Start over</button>`;
+  } else {
+    act = `<button class="small primary" data-act="refresh" data-prov="${prov}">Refresh</button>`;
+  }
+
+  // Say why Resume is on offer. "Resume" next to "indexed 12/12" is otherwise
+  // baffling -- the coverage is from older runs, the last run stopped early.
+  const tail = j ? ''
+    : p.incomplete
+      ? ` · last run stopped at ${p.last_run_stores}/${p.stores}`
+      : ` · about ${p.estimate_min} min`;
+
+  return `<div class="idx">
+    <div class="who"><b>${prov}</b><span>${p.stores} stores · ${cover}${tail}</span></div>
+    <div class="act">${act}</div>${prog}</div>`;
+}
+
+function renderIndex(d){
+  running = d.running || null;
+  $('#idxrows').innerHTML = d.provinces.map(idxRow).join('');
+
+  // A live product check uses the same single worker as a rebuild, so it can
+  // hold one up for minutes. It has no province row of its own, which used to
+  // make it invisible -- the rebuild just sat there looking stuck.
+  const live = (d.active || []).filter(j => j.kind === 'live');
+  const busyProv = d.provinces.filter(p => p.job);
+  const full = d.provinces.filter(p => p.stores && p.indexed >= p.stores).length;
+
+  if (live.length){
+    const j = live[0];
+    const eta = (j.eta_min === null || j.eta_min === undefined)
+      ? '' : `, ~${Math.max(0, Math.round(j.eta_min))}m left`;
+    $('#idxsum').textContent =
+      `live check running — ${j.done} of ${j.total} stores${eta}`;
+  } else if (busyProv.length){
+    $('#idxsum').textContent =
+      `rebuilding ${busyProv.map(p => p.province).join(', ')}`;
+  } else {
+    $('#idxsum').textContent =
+      `${full} of ${d.provinces.length} provinces fully indexed`;
+  }
+
+  // How close we have actually come to the site's request budget. This is
+  // measured from headers every response already carries, so it costs nothing
+  // and replaces an assumption nobody had checked.
+  const rate = Object.entries(d.rate || {})
+    .filter(([, v]) => v && v.lowest_remaining !== null && v.lowest_remaining !== undefined);
+  $('#ratenote').innerHTML = rate.length
+    ? 'Request budget: ' + rate.map(([kind, v]) =>
+        `${kind} runs got within <b>${v.lowest_remaining}</b>` +
+        (v.limit ? ` of ${v.limit}` : '') +
+        ` over ${v.runs} run${v.runs === 1 ? '' : 's'}` +
+        (v.throttled ? `, ${v.throttled} throttled` : ', never throttled')
+      ).join(' · ')
+    : '';
+
+  $('#idxrows').querySelectorAll('button[data-act]').forEach(b => {
+    b.onclick = async () => {
+      const prov = encodeURIComponent(b.dataset.prov), act = b.dataset.act;
+      b.disabled = true;
+      const r = act === 'cancel' ? await post(`/api/index/${prov}/cancel`)
+              : act === 'resume' ? await post(`/api/index/${prov}?resume=auto`)
+              : await post(`/api/index/${prov}`);
+      if (r && !r.ok){
+        const e = await r.json().catch(() => ({}));
+        $('#unlock').classList.remove('hide');
+        $('#pwmsg').textContent = e.error || 'That did not work.';
+      }
+      loadIndex();
+    };
+  });
+
+  // A finished build makes everything on screen stale, including the
+  // stocked-only filter and whatever product is open.
+  if (wasBusy && !d.busy){
+    loadCats();
+    rerun();
+    if (current) load(current);
+  }
+  wasBusy = d.busy;
+}
+
+async function loadIndex(){
+  clearTimeout(idxTimer);
+  try{
+    const d = await (await fetch('/api/index/status')).json();
+    renderIndex(d);
+    // Fast while something is moving, slow when nothing is.
+    idxTimer = setTimeout(loadIndex, d.busy ? 2000 : 30000);
+  }catch(e){
+    $('#idxsum').textContent = 'server unreachable';
+    idxTimer = setTimeout(loadIndex, 5000);
+  }
+}
+loadIndex();
+loadCatalog();
+loadBuild();
+
+// "not indexed yet" in a result opens the panel rather than naming a script
+// the person reading it has no way to run.
+document.addEventListener('click', e => {
+  if (!e.target.closest('a.idxlink')) return;
+  e.preventDefault();
+  $('#idxpanel').open = true;
+  $('#idxpanel').scrollIntoView({behavior:'smooth', block:'start'});
+});
+</script>
+</body>
+</html>

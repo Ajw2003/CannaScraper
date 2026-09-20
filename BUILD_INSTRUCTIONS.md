@@ -323,13 +323,37 @@ Daily runs + the SQLite history give you price-change tracking for free.
 
 ---
 
-## Deliberately excluded
+## The fast backend
 
-The site ships hardcoded `client_id` / `client_secret` in its page source for
-`app.cannacabana.com/api/product/scan-multiple-items/{store_id}`, which
-returns many SKUs per call and would cut a multi-hour sweep to minutes.
+`POST app.cannacabana.com/api/product/scan-multiple-items/<store_id>` with
+`{"skus":[{"<sku>": <variant_id>}]}` returns the same positional CSV the
+browser path already decodes, for **every SKU in one call**. Cost scales with
+stores, not stores × products.
 
-It is excluded on purpose: those credentials are not intended for third-party
-use, using them likely conflicts with the site's terms, and they can be
-rotated without notice. Treat adopting them as an explicit, informed decision
-rather than an optimization.
+Probe before building — these were the answers that shaped the design:
+
+| Question | Answer |
+|---|---|
+| Auth required? | **No.** Answers unauthenticated; use no credentials |
+| Rate limit? | `X-RateLimit-Limit: 60`/min, and 429s on short bursts |
+| Bad store id? | HTTP 500 with a PHP stack trace — handle non-200 explicitly |
+| Per-store data? | Yes, distinct and matching the browser exactly |
+
+So: pace **sequentially at ~50/min**. Concurrency buys nothing — at ~0.7 s
+latency the rate limit is the binding constraint, and bursts just earn 429s.
+
+`getEffectiveStoreId` does not exist on this path: we pass the real store_id,
+so the Calgary hub collapse is structurally impossible here.
+
+> [!IMPORTANT]
+> Build `--compare` alongside it, and run it before trusting the fast path. It
+> runs both backends over the same stores and diffs every field. A backend
+> returning stale data or another store's numbers produces output that looks
+> perfectly normal — this is the only thing that catches it. Exclude rows where
+> either backend errored, or you will blame the wrong one.
+
+Ethically this is a judgement call the project owner should make deliberately:
+it is an undocumented internal endpoint, and though no credentials or employee
+access are involved and the data is the same public pricing the page shows,
+it can be rotated or restricted without notice. Keep the browser backend
+working so that is a config change, not a rewrite.

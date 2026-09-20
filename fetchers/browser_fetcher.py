@@ -17,6 +17,9 @@ import scrape
 
 class BrowserFetcher:
     name = "browser"
+    # No internal pacing: the caller adds config.DELAY_RANGE between stores to
+    # keep the request rate polite.
+    paces_itself = False
 
     def __init__(self, headless: bool | None = None):
         self._headless = headless
