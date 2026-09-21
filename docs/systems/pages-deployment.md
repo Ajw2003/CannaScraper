@@ -79,7 +79,12 @@ can't offer them. It ports two pieces of Python logic directly to JS, cited in i
   (nested `.git`), so the outer repo can't see its files as trackable content, and
   `_build-province.yml`'s checkout of `main` would find `CannaScraper/` empty. See
   [Decisions.md](../Decisions.md#2026-09-20--cannascraper-still-has-its-own-git-the-outer-repo-cannot-track-its-files).
-- **Even once that's fixed, the site would still fail to load.** No workflow ever calls
+- **The workflows check out `main`, and the outer repo's only branch is `master`.**
+  `_build-province.yml:25`, `deploy-pages.yml:33` and `heartbeat.yml:24` all hard-code
+  `ref: main`. On a repo without that branch `actions/checkout` fails before any other step runs.
+  Rename the branch or change the three lines — but do it before the first push, and remember the
+  `data` branch is deliberately separate from whichever one is chosen.
+- **Even once those are fixed, the site would still fail to load.** No workflow ever calls
   `export_pages_json.py --catalog-only`, so `data/catalog.json` and `data/stores.json` — which
   `site/app.js` fetches before it can render anything — would never exist. The plan
   ([item 4](../plans/github-pages-per-province.md)) calls for a weekly catalog/stores refresh

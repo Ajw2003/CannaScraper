@@ -153,13 +153,13 @@ progress that takes minutes belongs somewhere watchable.
 
 Nothing new is invented where something exists:
 
-- `paths.app()` / `paths.FROZEN` — [paths.py:53](CannaScraper/paths.py:53)
+- `paths.app()` / `paths.FROZEN` — [paths.py:53](../../CannaScraper/paths.py:53)
 - `auth.require_admin` — the gate already used by `api_catalog_refresh`,
-  [server.py:663](CannaScraper/server.py:663)
-- `fmtAge()`, `post()`, `esc()`, `$()` — [web/index.html:629](CannaScraper/web/index.html:629),
-  [620](CannaScraper/web/index.html:620)
-- `loadCatalog()`'s poll-while-busy pattern — [web/index.html:305](CannaScraper/web/index.html:305)
-- `Step-Start` / `Step-Pass` / `Step-Fail` — [build.ps1:24](CannaScraper/build.ps1:24)
+  [server.py:663](../../CannaScraper/server.py:663)
+- `fmtAge()`, `post()`, `esc()`, `$()` — [web/index.html:629](../../CannaScraper/web/index.html:629),
+  [620](../../CannaScraper/web/index.html:620)
+- `loadCatalog()`'s poll-while-busy pattern — [web/index.html:305](../../CannaScraper/web/index.html:305)
+- `Step-Start` / `Step-Pass` / `Step-Fail` — [build.ps1:24](../../CannaScraper/build.ps1:24)
 
 ## Verification
 
@@ -199,7 +199,7 @@ Then click **Rebuild and restart** and confirm the app exits, the build
 console opens, and the page comes back on its own.
 
 **New self-tests** in `selftest.py`, next to the existing catalogue checks at
-[selftest.py:751](CannaScraper/selftest.py:751):
+[selftest.py:751](../../CannaScraper/selftest.py:751):
 
 - *build stamp is present and readable in a packaged build* — `buildinfo.status()`
   returns a parseable `built_at` when frozen, and `stale: false` from source.

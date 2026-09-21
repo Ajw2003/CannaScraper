@@ -22,12 +22,14 @@ has been proven to work end to end yet, for two different reasons below.
 ## The one thing that is not what it looks like
 
 **The GitHub Pages deployment reads as "ready to turn on" — every file the plan called for
-exists — but it cannot currently produce a working site, for two independent reasons, neither
+exists — but it cannot currently produce a working site, for three independent reasons, none
 visible from a file listing:**
 
 1. **`CannaScraper/` is still its own git repository** (nested `.git`, remote
-   `github.com/Ajw2003/CannaScraper`, branch `ApiFork`). The outer repo's `git status` reports
-   `CannaScraper/` as one untracked entry, not ~60 tracked files. `.github/workflows/_build-province.yml`
+   `github.com/Ajw2003/CannaScraper`, branch `ApiFork`). The outer repo records it as a single
+   gitlink pinned to commit `a0a2aaf` (the tip of `ApiFork`), not ~60 tracked files, and
+   `git status` reports it modified because `export_pages_json.py` and `site/` exist only as
+   uncommitted files inside the nested repo. `.github/workflows/_build-province.yml`
    checks out the outer repo's `main` and immediately runs `pip install -r requirements.txt` and
    `python index_builder.py` inside `CannaScraper/` — which requires those files to actually be
    present in that checkout. They won't be: a nested `.git` makes git store the outer repo's
@@ -36,7 +38,13 @@ visible from a file listing:**
    workflows would fail at the `pip install` step**, on the first run. See
    [Decisions.md](Decisions.md#2026-09-20--cannascraper-still-has-its-own-git-the-outer-repo-cannot-track-its-files).
 
-2. **Even with #1 fixed, the site would still fail to load anything.** `site/app.js` needs
+2. **The workflows check out a branch the outer repo does not have.** `_build-province.yml:25`,
+   `deploy-pages.yml:33` and `heartbeat.yml:24` all say `ref: main`; the outer repo's only branch
+   is `master`. Nothing in `docs/` recorded this until 2026-09-20. It is a one-word fix on
+   either side (rename the branch, or change the three `ref:` lines), but it has to happen
+   before the first push or `actions/checkout` fails before it reaches #1.
+
+3. **Even with #1 and #2 fixed, the site would still fail to load anything.** `site/app.js` needs
    `data/catalog.json` and `data/stores.json` (product metadata and the store registry) before it
    can render a single search result — `export_pages_json.py --catalog-only` is what produces
    them. No workflow calls it: the repo has exactly the 8 workflow files the
@@ -46,9 +54,9 @@ visible from a file listing:**
    missing-data message — `site/app.js:261-263` renders that fetch failure as its permanent empty
    state.
 
-Both gaps are small (a git restructure; one missing ~10-line workflow file plus wiring it into
-`deploy-pages.yml`'s data sources), but until both are closed, dispatching any of the five
-province workflows right now will fail on the very first step.
+All three gaps are small (a git restructure; a branch name; one missing ~10-line workflow file
+plus wiring it into `deploy-pages.yml`'s data sources), but until they are closed, dispatching any
+of the five province workflows right now will fail on the very first step.
 
 A smaller version of the same pattern shows up in milestone 4: `buildinfo.json` on disk
 (`CannaScraper/buildinfo.json`, `built_at: 2026-09-01T04:59:28Z`, `commit: 4c2cb87`) proves the
@@ -101,9 +109,9 @@ All the pieces called for in
 `CannaScraper/export_pages_json.py`, `CannaScraper/site/` (`index.html` + `app.js`, a full
 client-side port of catalog search and nearest-store ranking), and all 8 workflow files
 (`_build-province.yml`, five `scrape-<province>.yml`, `deploy-pages.yml`, `heartbeat.yml`). None
-of it has run — the repo has no commits yet (`git status`: "No commits yet"), no GitHub remote is
-configured, and the two blockers in "the one thing that is not what it looks like" above would
-stop it even after a first push. See [docs/systems/pages-deployment.md](systems/pages-deployment.md).
+of it has run — the outer repo has one docs-only commit, no GitHub remote configured for it, and
+the three blockers in "the one thing that is not what it looks like" above would stop it even
+after a first push. See [docs/systems/pages-deployment.md](systems/pages-deployment.md).
 
 ### 6. Shipment receiving → central stock ledger — not started
 
