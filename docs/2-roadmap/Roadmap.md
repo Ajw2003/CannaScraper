@@ -111,16 +111,16 @@ Action, repo-scoped token, publish to a public repo). Decided 2026-09-27; see
 `docs/6-decisions/Decisions.md`.
 
 **Contains.**
-- `.github/workflows/runner-ip-test.yml` — first step, being built by another agent concurrently
-  with this documentation pass. Checks whether cannacabana.com's catalog and stock API accept
-  requests from GitHub Actions runner IPs. **Result not yet known as of this writing.**
+- `.github/workflows/runner-ip-test.yml` + `ci/runner_ip_probe.py` — checks whether
+  cannacabana.com's catalog and stock API accept requests from GitHub Actions runner IPs.
+  **Passed 2026-09-27** (see `docs/3-state/ProjectState.md` M7).
 - Not yet built: the per-province scrape workflows themselves, the publish-to-public-repo step,
   and the static Pages site that reads the published data.
 
 **Acceptance.** Conditional, in order:
 1. `runner-ip-test.yml` shows cannacabana.com's catalog/stock API accepts GitHub Actions runner
    IPs without being blocked. **If this fails, the milestone is blocked** — the whole approach
-   depends on it.
+   depends on it. *Checked 2026-09-27: passed.*
 2. A per-province scrape workflow runs on schedule and successfully publishes data to a public
    repo.
 3. The CannaScraper repo is made public (required for free Actions minutes: a private repo caps
@@ -128,5 +128,4 @@ Action, repo-scoped token, publish to a public repo). Decided 2026-09-27; see
    min/month, well over the private cap).
 4. A static Pages site reads and displays the published per-province data.
 
-This milestone is **exploratory and not committed** beyond step 1 until the IP test result is
-known.
+Step 1 passed on 2026-09-27, so the milestone proceeds to step 2.

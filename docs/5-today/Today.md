@@ -58,14 +58,12 @@ step 1 of its acceptance criteria.
 
 ## What to do next, in order
 
-1. **Wait on `runner-ip-test.yml`'s result** (owned by the other, concurrent agent session) —
-   everything else in roadmap M7 is blocked on it. This is the single highest-leverage unknown
-   right now.
-2. If it passes: scaffold the first per-province scrape workflow and the publish-to-public-repo
-   step it depends on.
-3. If it fails: revisit roadmap M7's acceptance criteria and `docs/6-decisions/Decisions.md`'s
-   2026-09-27 entry — the whole direction needs a different approach, and that reasoning belongs
-   in a new decision entry, not a silent rewrite of today's.
+1. ~~Wait on `runner-ip-test.yml`'s result.~~ **Done: passed** (run [36352242167](https://github.com/Ajw2003/CannaScraper/actions/runs/36352242167), 2026-09-27, runner IP 172.208.153.2). Catalog and stock
+   API answer a runner normally; the real index ran 3 stores cleanly. Store locator returned 503
+   (not needed for scraping). Details in `docs/3-state/ProjectState.md` M7.
+2. The user makes the CannaScraper repo public (free Actions minutes).
+3. Scaffold the first per-province scrape workflow and the publish-to-public-repo step, starting
+   with one province end to end.
 4. Separately, and not urgently: `docs/3-state/ProjectState.md`'s cross-cutting issue about what
    "repo goes public" implies for `settings.json` secrets and the auth model is worth a real
    pass before M7 goes further than the IP test.

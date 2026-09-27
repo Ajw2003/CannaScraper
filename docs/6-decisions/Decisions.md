@@ -6,6 +6,23 @@ flipping its `Status` line to `Superseded`, pointing at the entry that replaced 
 
 ---
 
+## 2026-09-27 — Runner IP test passed; the Actions direction goes ahead
+
+**Context.** The 2026-09-27 "static Pages + per-province Actions" entry below was conditional on
+cannacabana.com serving GitHub Actions runners.
+
+**Decision.** The condition is met; proceed to a per-province scrape workflow. Treat the store
+locator as optional on runners: scrapes use the committed `stores.json`.
+
+**Why.** Run [36352242167](https://github.com/Ajw2003/CannaScraper/actions/runs/36352242167), 2026-09-27, runner IP 172.208.153.2: catalog HTTP 200, stock API HTTP 200, and `index_builder.py
+--province Saskatchewan --limit 3` stored 3,255 rows with no failures or retries. The locator
+page returned HTTP 503 (`retry-after: 139`) from Shopify; one sample cannot say whether that is
+a data-centre block or a transient error, and nothing in a scrape needs it. Limit of the
+evidence: one run, 66 API calls. A full province is ~2,300 calls and is not yet shown to stay
+unblocked.
+
+**Status.** Standing.
+
 ## 2026-09-27 — Explore static GitHub Pages site fed by per-province GitHub Actions scrapers
 
 **Context.** The current public-facing product is a Cloudflare tunnel out of one desktop machine

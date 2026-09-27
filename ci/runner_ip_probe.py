@@ -5,7 +5,9 @@ Microsoft data-centre addresses, which some sites refuse. Before building a
 scheduled scrape on Actions, this checks each endpoint the scraper depends on,
 using the scraper's own User-Agent so the answer applies to the real code.
 
-Prints one line per endpoint and exits 1 if any of them is not a clean 200.
+Prints one line per endpoint and exits 1 if a required one is not a clean 200.
+The store locator is reported but not required: a scrape reads the committed
+stores.json and only fetches the locator to refresh the store list.
 Runs anywhere with Python 3.11 and no third-party packages:
 
     python ci/runner_ip_probe.py
@@ -76,14 +78,16 @@ def main() -> int:
 
     print(f"Public IP: {public_ip()}")
     print(f"Probing as User-Agent: {config.USER_AGENT}")
-    results = [
+    required = [
         probe("catalog", f"{config.PRODUCTS_JSON}?limit=1&page=1"),
-        probe("locator", config.LOCATOR_URL),
         probe("stock-api", f"{config.API_BASE}/product/search?{search}"),
     ]
-    passed = sum(results)
-    print(f"{passed}/{len(results)} endpoints answered normally.")
-    return 0 if passed == len(results) else 1
+    if not probe("locator", config.LOCATOR_URL):
+        print("WARN  locator is optional: scrapes use the committed stores.json, "
+              "but refreshing the store list from this runner would fail.")
+    passed = sum(required)
+    print(f"{passed}/{len(required)} required endpoints answered normally.")
+    return 0 if passed == len(required) else 1
 
 
 if __name__ == "__main__":
