@@ -33,9 +33,12 @@ recently, which is why it is not called 100%.
 (run [36352242167](https://github.com/Ajw2003/CannaScraper/actions/runs/36352242167), 2026-09-27, runner IP 172.208.153.2) showed a GitHub runner gets clean answers from the catalog (HTTP 200) and the stock
 API (HTTP 200, `x-ratelimit-remaining: 59`), and the real `index_builder.py` indexed 3
 Saskatchewan stores (3,255 rows, 1.4 min, 0 failed, 0 retried). One gap: the store-locator page
-answered **HTTP 503** from Shopify with `retry-after: 139`, so refreshing `stores.json` from a
-runner may not work — scrapes read the committed `stores.json` and do not need it. One run is
-one data point: whether a full province (~2,300 requests) stays unblocked is not yet shown.
+answered **HTTP 503** from Shopify with `retry-after: 139` on that run, then **HTTP 200** on the
+next ([36352432606](https://github.com/Ajw2003/CannaScraper/actions/runs/36352432606), a
+different runner), which also repeated the 3-store index identically (3,255 rows, 0 failed) —
+so the 503 looks transient. Scrapes read the committed `stores.json` and do not need the locator
+anyway. Two short runs (66 API calls each) do not show a full province (~2,300 requests) stays
+unblocked.
 Everything downstream (per-province workflows, public repo, Pages site) is unbuilt.
 
 ## The one thing that is not what it looks like
