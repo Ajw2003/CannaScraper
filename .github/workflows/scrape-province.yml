@@ -1,0 +1,314 @@
+name: Scrape province
+
+# Scrapes each province in the list, publishes its latest stock as JSON to the
+# gh-pages branch, and keeps each province's scrape history as a release file.
+# The static page in site/ reads the JSON. Plan and reasoning:
+# docs/plans/static-site-one-province.md.
+#
+# Three jobs:
+#   plan     decides which provinces this run covers
+#   scrape   one per province, in parallel: restore history, scrape, export,
+#            save history back
+#   publish  rebuilds gh-pages from the site source plus every province's JSON
+#
+# No secrets: the site answers unauthenticated (config.py, API_SEND_AUTH) and
+# this repo is public, so the workflow's own token can write the branch and
+# the release.
+
+on:
+  schedule:
+    # Daily, 09:23 UTC = 3:23 am in Saskatchewan: stock after the overnight
+    # restock, before anyone checks. Off the hour because :00 is when GitHub's
+    # scheduler is busiest and runs are most often delayed.
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+    inputs:
+      province:
+        description: Province to scrape. "default" means every province in PROVINCES_DEFAULT.
+        type: choice
+        options:
+          - default
+          - Saskatchewan
+          - Alberta
+          - Ontario
+          - Manitoba
+          - British Columbia
+        default: default
+  # Scheduled and manual runs only exist once this file is on the default
+  # branch, so a push that changes the pipeline also runs it. That is how it
+  # is tested from a branch.
+  push:
+    paths:
+      - .github/workflows/scrape-province.yml
+      - ci/export_province.py
+      - site/**
+
+permissions:
+  contents: write     # push gh-pages, create and upload the history release
+  pages: read         # check whether Pages is switched on before verifying
+
+# Two runs publishing at once would each rebuild gh-pages from what they saw
+# and the second push would drop the first one's data.
+concurrency:
+  group: scrape-province
+  cancel-in-progress: false
+
+env:
+  # The provinces a scheduled run covers. Adding one is adding it here.
+  PROVINCES_DEFAULT: '["Saskatchewan"]'
+  # Release that holds history-<slug>.db. The tag never changes; files in it
+  # are replaced in place each run.
+  HISTORY_TAG: scrape-history
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      provinces: ${{ steps.pick.outputs.provinces }}
+    steps:
+      - id: pick
+        env:
+          CHOSEN: ${{ github.event.inputs.province || 'default' }}
+        run: |
+          set -euo pipefail
+          if [ "$CHOSEN" = "default" ]; then
+            PROVINCES="$PROVINCES_DEFAULT"
+          else
+            PROVINCES=$(jq -cn --arg p "$CHOSEN" '[$p]')
+          fi
+          echo "provinces=$PROVINCES" >> "$GITHUB_OUTPUT"
+          echo "Provinces this run: $PROVINCES"
+
+  scrape:
+    needs: plan
+    runs-on: ubuntu-latest
+    # Ontario, the biggest, is ~100 stores at ~30 s each.
+    timeout-minutes: 150
+    strategy:
+      # One province failing must not cancel the others; each runs on its own
+      # machine with its own IP address and its own rate-limit budget.
+      fail-fast: false
+      matrix:
+        province: ${{ fromJSON(needs.plan.outputs.provinces) }}
+    env:
+      PROVINCE: ${{ matrix.province }}
+      PYTHONUNBUFFERED: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Name files for this province
+        run: |
+          set -euo pipefail
+          SLUG=$(echo "$PROVINCE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+          DATA="$RUNNER_TEMP/cannacabana-data"
+          mkdir -p "$DATA" "$RUNNER_TEMP/out"
+          {
+            echo "SLUG=$SLUG"
+            # paths.py keeps its caches here instead of in the checkout.
+            echo "CANNACABANA_DATA=$DATA"
+            echo "DB=$DATA/history-$SLUG.db"
+          } >> "$GITHUB_ENV"
+
+      # Without history every run starts blank: nothing is marked sold out
+      # since last time, and a store that fails today has no older data to
+      # fall back on. A missing release or file is a normal first run; any
+      # other error stops the job, because carrying on would quietly throw
+      # the history away.
+      - name: Restore scrape history
+        id: restore
+        run: |
+          set -euo pipefail
+          ASSET="history-$SLUG.db"
+          if ! OUT=$(gh release view "$HISTORY_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>&1); then
+            if echo "$OUT" | grep -qi "release not found"; then
+              echo "No $HISTORY_TAG release yet: first run, starting with empty history."
+              echo "restored=none" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::error::Could not read the $HISTORY_TAG release: $OUT"; exit 1
+          fi
+          if ! echo "$OUT" | grep -qx "$ASSET"; then
+            echo "No $ASSET yet: first run for $PROVINCE, starting with empty history."
+            echo "restored=none" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          gh release download "$HISTORY_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" --dir "$CANNACABANA_DATA" --clobber
+          SIZE=$(stat -c %s "$DB")
+          echo "Restored $ASSET ($SIZE bytes)."
+          echo "restored=$SIZE" >> "$GITHUB_OUTPUT"
+
+      # index_builder exits 1 when some stores failed. That is a partial run,
+      # not a lost one: the export falls back to each failed store's newest
+      # earlier data, and the page says which stores are stale.
+      - name: Scrape
+        id: scrape
+        run: |
+          set -uo pipefail
+          python index_builder.py --province "$PROVINCE" --db "$DB" | tee index.txt
+          CODE=${PIPESTATUS[0]}
+          python - "$CODE" <<'EOF'
+          import json, re, sys
+          from datetime import datetime, timezone
+          text = open("index.txt", encoding="utf-8").read()
+          done = re.search(r"Indexed (\d+) store-product rows in ([\d.]+) min\s+\((\d+) store\(s\) failed", text)
+          run = re.search(r"run_id: (\S+)", text)
+          total = re.search(r"Stores: (\d+) to index", text)
+          summary = {
+              "run_id": run.group(1) if run else None,
+              "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "exit_code": int(sys.argv[1]),
+              "stores": int(total.group(1)) if total else None,
+              "rows": int(done.group(1)) if done else None,
+              "minutes": float(done.group(2)) if done else None,
+              "failed": int(done.group(3)) if done else None,
+          }
+          json.dump(summary, open("run.json", "w"))
+          print(json.dumps(summary))
+          EOF
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" -eq 1 ]; then
+            echo "::warning::$PROVINCE: some stores failed this run; their older data is kept. See the log above."
+          elif [ "$CODE" -ne 0 ]; then
+            echo "::error::$PROVINCE: index_builder exited $CODE."; exit 1
+          fi
+
+      - name: Export latest stock
+        run: |
+          set -euo pipefail
+          python ci/export_province.py --province "$PROVINCE" --db "$DB" \
+            --out "$RUNNER_TEMP/out" --run-summary run.json
+
+      # Saved even when the export failed, as long as the scrape wrote a
+      # database: those rows are real observations and the next run needs them.
+      - name: Save scrape history
+        if: always() && steps.scrape.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          if [ ! -s "$DB" ]; then
+            echo "::warning::No database was written; nothing to save."; exit 0
+          fi
+          if ! gh release view "$HISTORY_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Two provinces can reach this at once on the first run; the
+            # loser's create fails and the view afterwards confirms it exists.
+            gh release create "$HISTORY_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Scrape history (automated)" --latest=false \
+              --notes "SQLite scrape history per province, replaced by .github/workflows/scrape-province.yml on every run. Not a software release." \
+              || gh release view "$HISTORY_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+          gh release upload "$HISTORY_TAG" --repo "$GITHUB_REPOSITORY" --clobber "$DB"
+          echo "Saved $(basename "$DB") ($(stat -c %s "$DB") bytes)."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-${{ env.SLUG }}
+          path: ${{ runner.temp }}/out/${{ env.SLUG }}.json
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: scrape
+    # Publish whatever provinces succeeded, even if another one failed.
+    if: always() && needs.scrape.result != 'cancelled'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: data-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/new-data
+
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+          NEW="$RUNNER_TEMP/new-data"
+          PUB="$RUNNER_TEMP/pub"
+          mkdir -p "$PUB/data"
+          if ! ls "$NEW"/*.json >/dev/null 2>&1; then
+            echo "::error::No province produced data this run; nothing to publish."; exit 1
+          fi
+
+          # Start from what is published now, so a run that scraped one
+          # province keeps the others' data.
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            git fetch --depth 1 origin gh-pages
+            if git ls-tree --name-only FETCH_HEAD data/ | grep -q .; then
+              git archive FETCH_HEAD data | tar -x -C "$PUB"
+              echo "Kept from the current site: $(ls "$PUB/data" | tr '\n' ' ')"
+            fi
+          else
+            echo "No gh-pages branch yet: first publish."
+          fi
+
+          cp -r site/. "$PUB/"
+          cp "$NEW"/*.json "$PUB/data/"
+          # Pages would otherwise run Jekyll over the files for no benefit.
+          touch "$PUB/.nojekyll"
+
+          # The manifest the page reads to list provinces. Every data file
+          # is parsed here, so a corrupt one fails the publish rather than
+          # the page.
+          python - "$PUB/data" <<'EOF'
+          import json, pathlib, sys
+          data = pathlib.Path(sys.argv[1])
+          provinces = []
+          for f in sorted(data.glob("*.json")):
+              if f.name == "index.json":
+                  continue
+              d = json.loads(f.read_text(encoding="utf-8"))
+              provinces.append({
+                  "province": d["province"], "slug": f.stem,
+                  "generated_at": d["generated_at"],
+                  "stores": sum(1 for s in d["stores"] if s.get("scraped_at")),
+                  "products": len(d["products"]),
+              })
+          (data / "index.json").write_text(json.dumps({"provinces": provinces}), encoding="utf-8")
+          for p in provinces:
+              print(f"{p['province']:<18} {p['stores']:>3} stores  {p['products']:>5} products  {p['generated_at']}")
+          EOF
+          echo "PUB=$PUB" >> "$GITHUB_ENV"
+
+      # One orphan commit every time: the branch is build output, and daily
+      # data would otherwise pile up in git history forever.
+      - name: Push gh-pages
+        run: |
+          set -euo pipefail
+          cd "$PUB"
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Publish $(date -u +%Y-%m-%dT%H:%MZ) from ${GITHUB_SHA::7}"
+          git push --force -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          echo "Pushed gh-pages: $(git ls-files | wc -l) files."
+
+      # The step that checks what a visitor actually gets. Skipped with a
+      # warning, not silently, while Pages is still switched off.
+      - name: Verify the published site
+        run: |
+          set -euo pipefail
+          if ! SITE=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null); then
+            echo "::warning::GitHub Pages is not switched on for this repo, so nothing is served yet. Settings -> Pages -> Deploy from a branch -> gh-pages / (root)."
+            exit 0
+          fi
+          WANT=$(python -c "import json;print(sorted(p['generated_at'] for p in json.load(open('$PUB/data/index.json'))['provinces'])[-1])")
+          for attempt in $(seq 1 20); do
+            GOT=$(curl -fsSL "${SITE%/}/data/index.json?nocache=$attempt" 2>/dev/null \
+                  | python -c "import json,sys;print(sorted(p['generated_at'] for p in json.load(sys.stdin)['provinces'])[-1])" 2>/dev/null || true)
+            if [ "$GOT" = "$WANT" ]; then
+              curl -fsS -o /dev/null "$SITE" && echo "Live at $SITE with data from $GOT."
+              echo "Live at $SITE — data from $GOT" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "attempt $attempt: site shows '${GOT:-nothing}', waiting for $WANT"
+            sleep 15
+          done
+          echo "::error::Pushed, but $SITE is not serving this run's data after 5 minutes."
+          exit 1
