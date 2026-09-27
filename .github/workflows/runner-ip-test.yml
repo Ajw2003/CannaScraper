@@ -32,11 +32,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # Keeps history.db and caches out of the checkout (paths.py honours it).
-      CANNACABANA_DATA: ${{ runner.temp }}/cannacabana-data
       PROBE_PROVINCE: Saskatchewan
     steps:
       - uses: actions/checkout@v4
+
+      # Keeps history.db and caches out of the checkout (paths.py honours it).
+      # Set here because the runner context is not available in job-level env.
+      - name: Point the data directory at runner temp
+        run: echo "CANNACABANA_DATA=$RUNNER_TEMP/cannacabana-data" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
