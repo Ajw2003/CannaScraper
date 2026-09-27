@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Where's it in stock?</title>
+<style>
+:root{
+  --bg:#faf9f7; --fg:#1c1b19; --mut:#6b6864; --line:#e5e1db; --card:#fff;
+  --ok:#1a7f4b; --okbg:#e8f5ee; --low:#a8650a; --lowbg:#fdf2e2; --none:#8a8681;
+  --accent:#1a7f4b; --elite:#7a5a12; --elitebg:#f3e6c8;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#171614; --fg:#f0eee9; --mut:#a09c96; --line:#302e2a; --card:#201f1c;
+  --ok:#5cc98d; --okbg:#14301f; --low:#e0a34a; --lowbg:#33260f; --none:#7a7671;
+  --accent:#5cc98d; --elite:#e6c88a; --elitebg:#3a2f12;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  padding:20px 16px 80px}
+.wrap{max-width:760px;margin:0 auto}
+h1{font-size:20px;margin:0 0 14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input[type=search],select{
+  font:inherit;padding:11px 13px;border:1px solid var(--line);border-radius:9px;
+  background:var(--card);color:var(--fg);width:100%}
+input[type=search]:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{font:inherit;padding:10px 15px;border:1px solid var(--line);border-radius:9px;
+  background:var(--card);color:var(--fg);cursor:pointer;white-space:nowrap}
+button:hover{border-color:var(--mut)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+.controls{margin:10px 0 14px;gap:8px}
+.controls select{width:auto;flex:1;min-width:120px}
+.muted{color:var(--mut);font-size:13px}
+.pot{display:inline-block;font-size:11.5px;color:var(--mut);
+  border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:6px;
+  white-space:nowrap}
+.age{margin:0 0 14px;font-size:14px}
+.age b{font-size:15px}
+.notice{border:1px solid var(--low);border-radius:9px;background:var(--lowbg);
+  color:var(--low);padding:9px 13px;margin:0 0 14px;font-size:13px}
+.err{padding:22px 14px;color:var(--mut);text-align:center;border:1px dashed var(--line);
+  border-radius:11px}
+
+/* product picker */
+.plist{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
+.p{display:flex;gap:12px;align-items:center;padding:9px;border:1px solid var(--line);
+  border-radius:10px;background:var(--card);cursor:pointer;text-align:left;width:100%;
+  min-width:0;white-space:normal}
+.p:hover{border-color:var(--accent)}
+.p img{width:46px;height:46px;object-fit:contain;border-radius:6px;flex:none;
+  background:#0001}
+.p>div:last-child{flex:1;min-width:0}
+.p .t{font-weight:600;font-size:14px;line-height:1.3;overflow-wrap:break-word}
+.p .s{color:var(--mut);font-size:12.5px;overflow-wrap:break-word}
+
+/* results */
+.hero{display:flex;gap:14px;align-items:center;margin:6px 0 4px}
+.hero img{width:64px;height:64px;object-fit:contain;border-radius:8px;background:#0001}
+.hero h2{margin:0;font-size:17px}
+.summary{margin:10px 0 14px;font-size:14px}
+.big{font-size:22px;font-weight:700;color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;
+  overflow:hidden}
+.r{display:flex;align-items:center;gap:12px;padding:12px 14px;
+  border-bottom:1px solid var(--line)}
+.r:last-child{border-bottom:0}
+.r .qty{flex:none;min-width:62px}
+.r .who{flex:1;min-width:0}
+.r .who b{display:block;font-size:14.5px}
+.r .who span{color:var(--mut);font-size:12.5px}
+.r .pr{text-align:right;flex:none;font-variant-numeric:tabular-nums}
+.r .pr b{display:block}
+.pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700}
+.ok{background:var(--okbg);color:var(--ok)}
+.low{background:var(--lowbg);color:var(--low)}
+.elite{background:var(--elitebg);color:var(--elite);font-size:11px;
+  text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:20px;
+  margin-left:6px;white-space:nowrap}
+.empty{padding:22px 14px;color:var(--mut);text-align:center}
+.hide{display:none}
+a.src{color:var(--mut);font-size:12px;text-decoration:none}
+a.src:hover{text-decoration:underline}
+back-btn{cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Where's it in stock?</h1>
+
+  <div class="row controls">
+    <select id="prov" title="Province"></select>
+    <button id="loc" title="Use my device location">📍 Use my location</button>
+    <span class="muted" id="locinfo"></span>
+  </div>
+
+  <div id="age" class="age muted"></div>
+  <div id="notice" class="notice hide"></div>
+
+  <div id="picker">
+    <input type="search" id="q" placeholder="Search a product…  e.g. grape gas"
+           autocomplete="off">
+    <div class="row controls">
+      <select id="cat"><option value="">All categories</option></select>
+    </div>
+    <div id="plist" class="plist"></div>
+    <div id="more"></div>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let MANIFEST = null, DATA = null, coords = null, currentSku = null, timer = null;
+const PAGE = 50;
+let shownCount = PAGE;
+
+function esc(s){ return (s==null?'':String(s)).replace(/[<>&"]/g,
+  c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+function money(v){ return (v || v === 0) ? '$' + Number(v).toFixed(2) : '—'; }
+
+function fatal(msg){
+  $('#out').innerHTML = `<div class="err">${esc(msg)}</div>`;
+  $('#picker').classList.add('hide');
+}
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+
+// ---- boot -------------------------------------------------------------
+(async function boot(){
+  let m;
+  try{
+    const r = await fetch('data/index.json', {cache: 'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    m = await r.json();
+  }catch(e){
+    return fatal('Could not load the province list (data/index.json). ' +
+      'The site may not have published yet.');
+  }
+  MANIFEST = m;
+  if (!m.provinces || !m.provinces.length){
+    return fatal('No data published yet.');
+  }
+  const remembered = lsGet('province');
+  const have = m.provinces.map(p => p.slug);
+  const slug = (remembered && have.includes(remembered)) ? remembered : m.provinces[0].slug;
+
+  $('#prov').innerHTML = m.provinces.map(p =>
+    `<option value="${esc(p.slug)}"${p.slug === slug ? ' selected' : ''}>${esc(p.province)}</option>`
+  ).join('');
+  $('#prov').onchange = () => { lsSet('province', $('#prov').value); loadProvince($('#prov').value); };
+
+  loadProvince(slug);
+})();
+
+async function loadProvince(slug){
+  DATA = null; currentSku = null;
+  $('#out').innerHTML = '';
+  $('#notice').classList.add('hide');
+  $('#age').textContent = 'Loading…';
+  let d;
+  try{
+    const r = await fetch('data/' + slug + '.json', {cache: 'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    d = await r.json();
+  }catch(e){
+    $('#age').textContent = '';
+    return fatal(`No data published yet for this province.`);
+  }
+  DATA = d;
+  $('#picker').classList.remove('hide');
+  renderAge();
+  buildCategories();
+  rerun();
+}
+
+function renderAge(){
+  const gen = new Date(DATA.generated_at);
+  const hrs = (Date.now() - gen.getTime()) / 3600000;
+  let label;
+  if (hrs < 1/60) label = 'just now';
+  else if (hrs < 1) label = Math.round(hrs*60) + ' min ago';
+  else if (hrs < 48) label = hrs.toFixed(1) + ' h ago';
+  else label = (hrs/24).toFixed(1) + ' days ago';
+  $('#age').innerHTML = `Updated <b title="${esc(gen.toString())}">${label}</b>`;
+
+  const run = DATA.run;
+  const failed = run && run.failed ? Number(run.failed) : 0;
+  if (failed > 0){
+    const names = (run.failed_stores || []).join(', ');
+    $('#notice').classList.remove('hide');
+    $('#notice').textContent = `${failed} store${failed === 1 ? '' : 's'} failed on the last ` +
+      `run${names ? ' (' + names + ')' : ''} — showing their older data instead.`;
+  } else {
+    $('#notice').classList.add('hide');
+  }
+}
+
+// ---- potency (ported from server.py:118-178, _MG_CATEGORIES + potency_span_of) ----
+const MG_CATEGORIES = new Set([
+  "edibles", "gummies", "beverages", "chocolates", "oils & capsules",
+  "capsules", "oils", "topicals", "soft chews", "mints", "baked goods",
+  "capsules & soft gels", "oils & caps",
+]);
+
+function potency(value, category){
+  const n = Number(value);
+  if (!isFinite(n) || n <= 0) return '';
+  const cat = (category || '').trim().toLowerCase();
+  if (MG_CATEGORIES.has(cat) || n > 100) return (n % 1 === 0 ? n : n.toFixed(1)) + ' mg';
+  return (n % 1 === 0 ? n : n.toFixed(1)) + '%';
+}
+
+function pickSpan(loN, loMin, loMax, hiN, hiMin, hiMax){
+  if (hiN > loN && hiMin !== null) return [hiMin, hiMax];
+  if (loMin !== null) return [loMin, loMax];
+  if (hiMin !== null) return [hiMin, hiMax];
+  return null;
+}
+
+function potencySpanOf(values, category){
+  const lo = [], hi = [];
+  for (const v of values){
+    const n = Number(v);
+    if (!isFinite(n) || n <= 0) continue;
+    (n > 100 ? hi : lo).push(n);
+  }
+  const span = pickSpan(lo.length, lo.length ? Math.min(...lo) : null, lo.length ? Math.max(...lo) : null,
+                        hi.length, hi.length ? Math.min(...hi) : null, hi.length ? Math.max(...hi) : null);
+  if (!span) return '';
+  const [loV, hiV] = span;
+  const dp = hiV >= 1 ? 1 : 2;
+  if (loV.toFixed(dp) === hiV.toFixed(dp)) return potency(loV, category);
+  const cat = (category || '').trim().toLowerCase();
+  const unit = (MG_CATEGORIES.has(cat) || loV > 100) ? ' mg' : '%';
+  return `${loV.toFixed(dp)}–${hiV.toFixed(dp)}${unit}`;
+}
+
+// ---- categories ---------------------------------------------------------
+function buildCategories(){
+  const keep = $('#cat').value;
+  const cats = new Set();
+  for (const sku in DATA.stock){
+    const p = DATA.products[sku];
+    if (p && p.category) cats.add(p.category);
+  }
+  const sorted = [...cats].sort();
+  $('#cat').innerHTML = '<option value="">All categories</option>' +
+    sorted.map(c => `<option value="${esc(c)}"${c === keep ? ' selected' : ''}>${esc(c)}</option>`).join('');
+}
+$('#cat').onchange = () => rerun();
+
+// ---- search ---------------------------------------------------------------
+$('#q').addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(rerun, 150);
+});
+
+function rerun(){
+  shownCount = PAGE;
+  renderResults();
+}
+
+function matchProduct(p, terms){
+  const hay = ((p.title || '') + ' ' + (p.brand || '')).toLowerCase();
+  return terms.every(t => hay.includes(t));
+}
+
+function renderResults(){
+  if (!DATA) return;
+  const q = $('#q').value.trim().toLowerCase();
+  const terms = q ? q.split(/\s+/).filter(Boolean) : [];
+  const cat = $('#cat').value;
+
+  const skus = Object.keys(DATA.stock).filter(sku => {
+    const p = DATA.products[sku];
+    if (!p) return false;
+    if (cat && p.category !== cat) return false;
+    if (terms.length && !matchProduct(p, terms)) return false;
+    return true;
+  });
+
+  if (!skus.length){
+    $('#plist').innerHTML = `<div class="muted">${terms.length || cat
+      ? 'Nothing matched that.' : 'Type to search, or pick a category.'}</div>`;
+    $('#more').innerHTML = '';
+    return;
+  }
+
+  const cards = skus.slice(0, shownCount).map(sku => {
+    const p = DATA.products[sku];
+    const rows = DATA.stock[sku];
+    const nStores = rows.length;
+    const prices = rows.map(r => r[2]).filter(v => v !== null && v !== undefined);
+    const lowest = prices.length ? Math.min(...prices) : null;
+    const thcVals = rows.map(r => r[5]).filter(v => v !== null && v !== undefined);
+    const thc = thcVals.length ? potencySpanOf(thcVals, p.category) : '';
+    return `<button class="p" data-sku="${esc(sku)}">
+      ${p.image ? `<img src="${esc(p.image)}${p.image.includes('?') ? '&' : '?'}width=200" alt="" loading="lazy">` : '<div class="p-img"></div>'}
+      <div><div class="t">${esc(p.title)}</div>
+      <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}${
+        thc ? `<span class="pot">THC ${esc(thc)}</span>` : ''}
+        <br>${nStores} store${nStores === 1 ? '' : 's'} · from ${money(lowest)}</div></div>
+    </button>`;
+  }).join('');
+
+  $('#plist').innerHTML = cards;
+  document.querySelectorAll('#plist .p').forEach(b => b.onclick = () => showProduct(b.dataset.sku));
+
+  const shown = Math.min(shownCount, skus.length);
+  $('#more').innerHTML = shown < skus.length
+    ? `<div class="muted" style="margin:10px 0 4px">Showing ${shown} of ${skus.length}</div>
+       <button id="moreb">Show ${Math.min(PAGE, skus.length - shown)} more</button>`
+    : (skus.length > PAGE ? `<div class="muted" style="margin:10px 0">All ${skus.length} shown</div>` : '');
+  const mb = $('#moreb');
+  if (mb) mb.onclick = () => { shownCount += PAGE; renderResults(); };
+}
+
+// ---- geolocation ----------------------------------------------------------
+$('#loc').onclick = () => {
+  if (!navigator.geolocation){ $('#locinfo').textContent = 'not supported'; return; }
+  $('#locinfo').textContent = 'locating…';
+  navigator.geolocation.getCurrentPosition(
+    p => { coords = [p.coords.latitude, p.coords.longitude];
+           $('#locinfo').textContent = 'using your location';
+           if (currentSku) showProduct(currentSku); },
+    e => { $('#locinfo').textContent = e.code === 1
+             ? 'blocked' : 'unavailable'; });
+};
+
+function haversineKm(lat1, lng1, lat2, lng2){
+  const R = 6371.0;
+  const toRad = d => d * Math.PI / 180;
+  const p1 = toRad(lat1), p2 = toRad(lat2);
+  const dp = toRad(lat2 - lat1), dl = toRad(lng2 - lng1);
+  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ---- per-product store table ----------------------------------------------
+function showProduct(sku){
+  currentSku = sku;
+  const p = DATA.products[sku];
+  const rows = DATA.stock[sku] || [];
+  const storesById = {};
+  for (const s of DATA.stores) storesById[s.id] = s;
+
+  let items = rows.map(r => {
+    const [storeId, qty, price, tierLabel, tierPrice, thc, cbd] = r;
+    const s = storesById[storeId] || {name: storeId, city: '', lat: null, lng: null};
+    let dist = null;
+    if (coords && s.lat != null && s.lng != null){
+      dist = haversineKm(coords[0], coords[1], s.lat, s.lng);
+    }
+    return {storeId, qty, price, tierLabel, tierPrice, thc, cbd, s, dist};
+  });
+
+  if (coords){
+    items = items.filter(i => i.dist !== null).sort((a, b) => a.dist - b.dist)
+      .concat(items.filter(i => i.dist === null));
+  } else {
+    items.sort((a, b) => (b.qty ?? 0) - (a.qty ?? 0));
+  }
+
+  const thcAll = rows.map(r => r[5]).filter(v => v !== null && v !== undefined);
+  const thc = thcAll.length ? potencySpanOf(thcAll, p.category) : '';
+  const cbdAll = rows.map(r => r[6]).filter(v => v !== null && v !== undefined);
+  const cbd = cbdAll.length ? potencySpanOf(cbdAll, p.category) : '';
+
+  const rowsHtml = items.map(i => {
+    const qtyHtml = i.qty === null || i.qty === undefined
+      ? '<span class="pill ok">in stock</span>'
+      : `<span class="pill ${i.qty >= 5 ? 'ok' : 'low'}">${i.qty} ${i.qty===1?'unit':'units'}</span>`;
+    const distHtml = i.dist !== null ? `${i.dist.toFixed(1)} km` : '';
+    const tierHtml = i.tierLabel && i.tierLabel !== '-'
+      ? `<br><span class="muted" style="font-size:11.5px">${esc(i.tierLabel)} ${money(i.tierPrice)}</span>` : '';
+    const link = `https://cannacabana.com/products/${encodeURIComponent(p.handle || '')}?sID=${encodeURIComponent(i.storeId)}`;
+    return `<div class="r">
+      <div class="qty">${qtyHtml}</div>
+      <div class="who"><b>${esc(i.s.name)}</b><span>${esc(i.s.city)}${distHtml ? ' · ' + distHtml : ''} · <a class="src" href="${link}" target="_blank" rel="noopener">view</a></span></div>
+      <div class="pr"><b>${money(i.price)}</b>${tierHtml}</div>
+    </div>`;
+  }).join('');
+
+  $('#out').innerHTML = `
+    <button id="back" style="margin-bottom:10px">← Back to search</button>
+    <div class="hero">
+      ${p.image ? `<img src="${esc(p.image)}${p.image.includes('?') ? '&' : '?'}width=200" alt="">` : ''}
+      <div><h2>${esc(p.title)}</h2>
+        <div class="muted">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category || '')} · SKU ${esc(sku)}${
+          thc ? `<span class="pot">THC ${esc(thc)}</span>` : ''}${
+          cbd ? `<span class="pot">CBD ${esc(cbd)}</span>` : ''}</div></div>
+    </div>
+    <div class="summary"><span class="big">${items.length}</span> store${items.length===1?'':'s'} in stock</div>
+    <div class="card">${rowsHtml || '<div class="empty">No stores.</div>'}</div>`;
+  $('#back').onclick = () => { currentSku = null; $('#out').innerHTML = ''; };
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+</script>
+</body>
+</html>
