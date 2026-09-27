@@ -1,0 +1,65 @@
+# Project state
+
+**Headline: ~65% of the roadmap complete** (5 of 7 milestones essentially done; M6 not started,
+M7 exploratory/blocked on an unknown result).
+
+## Status table
+
+| Milestone | Status | % |
+|---|---|---|
+| M1 — Core scraper (catalog/stores/browser) | Done | 100% |
+| M2 — API fetcher (fast path) | Done | 100% |
+| M3 — Rate limiting, egress pool, durable index builder | Done | 100% |
+| M4 — Normalized schema | Done | 100% |
+| M5 — Packaged, publicly-servable desktop app | Nearly done, actively stabilizing | ~95% |
+| M6 — Receiving ledger (perpetual inventory) | Not started, plan exists | 0% |
+| M7 — Static Pages + per-province Actions scrapers | Exploratory, first step in flight | 0% |
+
+## Per-milestone detail
+
+**M1-M4** are built, exercised by `selftest.py`, and referenced throughout the README as the
+tool's normal operation (see `docs/2-roadmap/Roadmap.md` for citations). No open gaps found in
+this pass.
+
+**M5.** The exe builds, self-tests, and serves local/LAN/public URLs with password-gated writes.
+The two most recent commits (`a0a2aaf`, `4c2cb87`) are bug fixes specifically to the packaged
+build's freshness detection and search — i.e. real users hit real bugs in this milestone
+recently, which is why it is not called 100%.
+
+**M6.** `PLAN_receiving_ledger.md` is a detailed plan but no ledger code exists in the repo.
+0% is accurate, not a placeholder.
+
+**M7.** Decided today (2026-09-27). `.github/workflows/runner-ip-test.yml` is being built by a
+different, concurrent agent session — not yet present in this checkout as of this documentation
+pass (`.github/` does not exist in the working tree at the time this was written). Its result is
+unknown. Everything downstream of it (per-province workflows, public repo, Pages site) is
+unbuilt.
+
+## The one thing that is not what it looks like
+
+**The egress pool reads as a completed throughput feature, but ships disabled by default and
+unverified for this specific site.** `egress.py` and `index_builder.py --probe-egress` are
+fully implemented (M3, 100%), but `config.EGRESS_PROXIES` is empty by default, and the README is
+explicit that nothing proves the site's rate counter is actually keyed on source IP
+(`README.md:519-522`). Someone skimming the code would reasonably conclude "multi-route
+throughput is a solved, working feature" — what is actually true is "the *mechanism* to test and
+use that is solved; whether it helps against this specific site has not been demonstrated,
+because no proxy routes are configured in this repo." Anyone deploying it for real is expected to
+run `--probe-egress` against their own configured routes first.
+
+## Cross-cutting issues that belong to no milestone
+
+- **`.github/` does not exist yet in this checkout.** The repository-wide move implied by M7
+  (making the repo public) is a decision with consequences for every other milestone's
+  assumptions (e.g. `settings.json`/`egress_proxies` secrecy, `auth.py`'s password model) that
+  no milestone's acceptance criterion currently re-checks. Worth flagging explicitly rather than
+  letting it surface only inside M7.
+- **THC/CBD per-lot variance** (`db.py:23-26`) and the broader "what belongs in `products` vs.
+  per-observation" question is called out as an open follow-up in `PLAN_followups.md` and isn't
+  owned by any single milestone above — it's a standing data-modeling concern that touches M4
+  (schema) and M6 (ledger) both.
+- **Bundled `cloudflared.exe` vs. named tunnel** — M5's default (`quick` tunnel) is fine for demo
+  use but explicitly best-effort/no-SLA (`tunnel.py:9-14`); nothing in the roadmap currently
+  tracks "get a named tunnel + token set up for a link that needs to keep working," which
+  `PLAN_receiving_ledger.md` itself flags as a prerequisite before real stores depend on this
+  (`PLAN_receiving_ledger.md:19-23`).
