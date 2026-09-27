@@ -128,4 +128,4 @@ Action, repo-scoped token, publish to a public repo). Decided 2026-09-27; see
    min/month, well over the private cap).
 4. A static Pages site reads and displays the published per-province data.
 
-Step 1 passed on 2026-09-27, so the milestone proceeds to step 2.
+Step 1 passed and step 3 was done on 2026-09-27. Step 2 has run once for Saskatchewan from a push, not yet on schedule; step 4 waits on Pages being switched on.

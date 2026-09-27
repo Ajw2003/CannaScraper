@@ -1,7 +1,7 @@
 # Project state
 
 **Headline: ~65% of the roadmap complete** (5 of 7 milestones essentially done; M6 not started,
-M7 exploratory/blocked on an unknown result).
+M7 in progress: Saskatchewan scrapes and publishes end to end; not yet served or scheduled).
 
 ## Status table
 
@@ -13,7 +13,7 @@ M7 exploratory/blocked on an unknown result).
 | M4 — Normalized schema | Done | 100% |
 | M5 — Packaged, publicly-servable desktop app | Nearly done, actively stabilizing | ~95% |
 | M6 — Receiving ledger (perpetual inventory) | Not started, plan exists | 0% |
-| M7 — Static Pages + per-province Actions scrapers | Exploratory, first step in flight | 0% |
+| M7 — Static Pages + per-province Actions scrapers | Saskatchewan publishes; Pages off, schedule not on main | ~50% |
 
 ## Per-milestone detail
 
@@ -41,6 +41,17 @@ anyway. Two short runs (66 API calls each) do not show a full province (~2,300 r
 unblocked.
 Everything downstream (per-province workflows, public repo, Pages site) is unbuilt.
 
+M7 step 2, one province end to end (plan: `docs/plans/static-site-one-province.md`). Run [36353925298](https://github.com/Ajw2003/CannaScraper/actions/runs/36353925298)
+(push-triggered from the feature branch) scraped all 13 Saskatchewan stores in 6.5 min, 0
+failed, 15,171 in-stock rows; exported `data/saskatchewan.json` (1.45 MB, 2,270 products);
+saved `history-saskatchewan.db` (6.3 MB) to the `scrape-history` release; pushed `gh-pages`.
+The published branch, served locally and driven headless, searches and shows per-store stock
+and member prices from that real data with no JS errors and no horizontal scroll at 390px
+(`docs/generated/static-site-real-*.png`). **Not yet true:** nothing is served publicly — the
+run warned that GitHub Pages is switched off; the daily schedule only fires once the workflow
+is on the default branch; product thumbnails could not be checked (this sandbox cannot reach
+`cdn.shopify.com`); a second run restoring history has not happened yet.
+
 ## The one thing that is not what it looks like
 
 **The egress pool reads as a completed throughput feature, but ships disabled by default and
@@ -55,8 +66,7 @@ run `--probe-egress` against their own configured routes first.
 
 ## Cross-cutting issues that belong to no milestone
 
-- **`.github/` does not exist yet in this checkout.** The repository-wide move implied by M7
-  (making the repo public) is a decision with consequences for every other milestone's
+- **The repo went public on 2026-09-27.** That move with consequences for every other milestone's
   assumptions (e.g. `settings.json`/`egress_proxies` secrecy, `auth.py`'s password model) that
   no milestone's acceptance criterion currently re-checks. Worth flagging explicitly rather than
   letting it surface only inside M7.

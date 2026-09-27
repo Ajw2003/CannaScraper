@@ -61,9 +61,13 @@ step 1 of its acceptance criteria.
 1. ~~Wait on `runner-ip-test.yml`'s result.~~ **Done: passed** (run [36352242167](https://github.com/Ajw2003/CannaScraper/actions/runs/36352242167), 2026-09-27, runner IP 172.208.153.2). Catalog and stock
    API answer a runner normally; the real index ran 3 stores cleanly. Store locator returned 503
    (not needed for scraping). Details in `docs/3-state/ProjectState.md` M7.
-2. The user makes the CannaScraper repo public (free Actions minutes).
-3. Scaffold the first per-province scrape workflow and the publish-to-public-repo step, starting
-   with one province end to end.
+2. ~~The user makes the CannaScraper repo public.~~ Done.
+3. ~~One province end to end.~~ Built and run once ([36353925298](https://github.com/Ajw2003/CannaScraper/actions/runs/36353925298)): Saskatchewan scraped, exported,
+   history saved, `gh-pages` pushed. See `docs/3-state/ProjectState.md` M7.
+4. **User:** switch on GitHub Pages (Settings → Pages → Deploy from a branch → `gh-pages`, root).
+   Then re-run to confirm the verify step sees the live site.
+5. Merge to the default branch so the daily schedule starts; watch the second run restore history.
+6. Add the other provinces to `PROVINCES_DEFAULT` one at a time.
 4. Separately, and not urgently: `docs/3-state/ProjectState.md`'s cross-cutting issue about what
    "repo goes public" implies for `settings.json` secrets and the auth model is worth a real
    pass before M7 goes further than the IP test.
