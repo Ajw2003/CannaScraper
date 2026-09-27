@@ -33,6 +33,9 @@ jobs:
     timeout-minutes: 20
     env:
       PROBE_PROVINCE: Saskatchewan
+      # Output goes through `tee`, so Python would otherwise buffer it all
+      # until exit and a slow or stuck run would show nothing in the log.
+      PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
 
