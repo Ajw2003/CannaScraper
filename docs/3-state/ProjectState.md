@@ -64,6 +64,14 @@ Saskatchewan restored 11.9 MB and saved 6.06 MB after its third run. **Not yet t
 hourly cron only fires after PR [#4](https://github.com/Ajw2003/CannaScraper/pull/4) merges to
 `main`; Alberta/Ontario had not yet been through a prune at the time of writing.
 
+M7, restructure (2026-09-28, PR #6). Scraping split into `scrape-one.yml` per province and the
+`scrape-all.yml` orchestrator (decision 2026-09-28); no workflow scrapes on push any more.
+`ci/publish_gh_pages.sh` tested locally against a bare repo, including three concurrent
+publishes. **Not yet run on GitHub:** the orchestrator, the reusable-workflow call, and the
+lease push against github.com only run once PR #6 merges. Also open: no scheduled run of the
+old workflow had appeared by 03:15 UTC (the 02:23 slot was missed), so whether GitHub fires the
+new hourly schedule still has to be confirmed.
+
 ## The one thing that is not what it looks like
 
 **The egress pool reads as a completed throughput feature, but ships disabled by default and

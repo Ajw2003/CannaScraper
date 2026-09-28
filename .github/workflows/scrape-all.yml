@@ -1,0 +1,86 @@
+name: Scrape all provinces
+
+# The one place scraping is started from. Calls scrape-one.yml once per
+# province, either all at once (parallel, the hourly default) or one after
+# another (sequential). Each province is its own job, so each shows up, fails
+# and can be re-run on its own in the Actions tab.
+#
+# Parallel is the default because every province runs on its own machine
+# with its own IP address and rate-limit budget, so running them together is
+# no harder on any one route than running them apart, and the small
+# provinces finish in ~10 minutes instead of waiting behind Ontario.
+#
+# There is deliberately no concurrency group here. Overlap is handled per
+# province inside scrape-one.yml, so if Ontario is still busy when the next
+# hour starts, Saskatchewan still refreshes on time.
+
+on:
+  schedule:
+    # Hourly, at :23 -- off the hour because :00 is when GitHub's scheduler is
+    # busiest and runs are most often delayed.
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run provinces all at once (parallel) or one after another (sequential).
+        type: choice
+        options: [parallel, sequential]
+        default: parallel
+      provinces:
+        description: Comma-separated list, e.g. "Alberta, Manitoba". Leave empty for all.
+        type: string
+        default: ''
+
+permissions:
+  contents: write     # passed down to scrape-one.yml
+  pages: read
+
+env:
+  # Every province the site covers. Adding one is adding it here and to the
+  # province list in scrape-one.yml's manual-run form.
+  ALL_PROVINCES: '["Saskatchewan", "Alberta", "Ontario", "Manitoba", "British Columbia"]'
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      provinces: ${{ steps.pick.outputs.provinces }}
+      max_parallel: ${{ steps.pick.outputs.max_parallel }}
+    steps:
+      - id: pick
+        env:
+          # A scheduled run carries no inputs, so both fall back to defaults.
+          MODE: ${{ github.event.inputs.mode || 'parallel' }}
+          CHOSEN: ${{ github.event.inputs.provinces || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(echo "$CHOSEN" | tr -d ' ,')" ]; then
+            PROVINCES="$ALL_PROVINCES"
+          else
+            # Split on commas, trim, and refuse anything not in the list:
+            # a typo would otherwise start a job that fails on an unknown
+            # province after spinning up a machine.
+            PROVINCES=$(jq -cn --arg s "$CHOSEN" --argjson all "$ALL_PROVINCES" '
+              [$s | split(",")[] | gsub("^\\s+|\\s+$"; "") | select(length > 0)] as $want
+              | ($want - $all) as $bad
+              | if ($bad | length) > 0
+                then error("unknown province(s): \($bad | join(", ")); expected one of: \($all | join(", "))")
+                else $want end')
+          fi
+          if [ "$MODE" = "sequential" ]; then MAX=1; else MAX=$(echo "$PROVINCES" | jq length); fi
+          echo "provinces=$PROVINCES" >> "$GITHUB_OUTPUT"
+          echo "max_parallel=$MAX" >> "$GITHUB_OUTPUT"
+          echo "Mode: $MODE ($MAX at a time). Provinces: $PROVINCES"
+          echo "**$MODE** ($MAX at a time): $PROVINCES" >> "$GITHUB_STEP_SUMMARY"
+
+  province:
+    needs: plan
+    strategy:
+      # One province failing must not stop the others.
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.max_parallel) }}
+      matrix:
+        province: ${{ fromJSON(needs.plan.outputs.provinces) }}
+    uses: ./.github/workflows/scrape-one.yml
+    with:
+      province: ${{ matrix.province }}

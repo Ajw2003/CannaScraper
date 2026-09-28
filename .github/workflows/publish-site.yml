@@ -1,0 +1,62 @@
+name: Publish site
+
+# Puts a change to the page (site/) live without scraping anything. It takes
+# the data already on gh-pages, lays the new site/ over it, and pushes. The
+# scrape itself only runs from scrape-all.yml / scrape-one.yml, hourly or by hand.
+#
+# Uses the same publish script as the scrape (ci/publish_gh_pages.sh), which
+# refuses to overwrite gh-pages if a province published in the meantime and
+# retries on top of it, so a page edit and a scrape can land together safely.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - .github/workflows/publish-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write     # push gh-pages
+  pages: read         # find the live URL to verify against
+
+concurrency:
+  group: publish-site
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish the page over the existing data
+        env:
+          PUBLISH_MESSAGE: "Publish page from ${{ github.sha }}"
+        run: |
+          set -euo pipefail
+          ci/publish_gh_pages.sh "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Verify the live page is the new one
+        run: |
+          set -euo pipefail
+          if ! SITE=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null); then
+            echo "::warning::GitHub Pages is not switched on for this repo, so nothing is served."
+            exit 0
+          fi
+          WANT=$(sha256sum site/index.html | cut -d' ' -f1)
+          for attempt in $(seq 1 20); do
+            GOT=$(curl -fsSL "${SITE%/}/index.html?nocache=$attempt" 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            if [ "$GOT" = "$WANT" ]; then
+              echo "Live at $SITE with this commit's page."
+              echo "Live at $SITE with page from ${GITHUB_SHA::7}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "attempt $attempt: live page does not match yet"
+            sleep 15
+          done
+          echo "::error::Pushed, but $SITE is not serving this commit's page after 5 minutes."
+          exit 1

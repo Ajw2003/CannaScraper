@@ -1,6 +1,6 @@
 """Shrink a province's history DB to its current state.
 
-Built for the hourly scrape (.github/workflows/scrape-province.yml). Every run
+Built for the hourly scrape (.github/workflows/scrape-one.yml). Every run
 adds a full copy of every in-stock row -- about 5.6 MB per run for
 Saskatchewan's 15k rows, ~40 MB for Ontario -- and the DB travels as a GitHub
 release file capped at 2 GB, so hourly runs would hit the cap within days.

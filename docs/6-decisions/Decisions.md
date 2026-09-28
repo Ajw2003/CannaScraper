@@ -6,6 +6,32 @@ flipping its `Status` line to `Superseded`, pointing at the entry that replaced 
 
 ---
 
+## 2026-09-28 — One workflow run per province, started by an orchestrator
+
+**Context.** All five provinces ran as one matrix in `scrape-province.yml`, so the published data
+only moved when the slowest province (Ontario, 50–75 min depending on how fast the site answers)
+finished, and every push touching the pipeline or `site/` started a full scrape. Run 36368189008
+showed every province ~1.6× slower than the run before with identical request counts and no
+retries — the site's response time, not our pacing — which pushed Alberta/Ontario past an hour.
+
+**Decision.** Split into `scrape-one.yml` (one province end to end, including its own publish;
+per-province concurrency group) and `scrape-all.yml` (hourly orchestrator calling it per
+province, parallel by default or sequential on request, for all or a chosen list). No workflow
+scrapes on push; page-only changes go through `publish-site.yml`. Every write to `gh-pages` goes
+through `ci/publish_gh_pages.sh`, which pushes with `--force-with-lease` against the commit it
+built from and retries on refusal.
+
+**Why.** The user asked for per-province runs behind one central job that can run them either
+way. Per-province concurrency keeps a province from overlapping itself (two runs would restore
+the same history and the second save would drop the first's rows) without making small
+provinces wait on Ontario. The lease replaces a plain force-push, which with independent
+publishers would let the last one erase the others' data; tested with three provinces
+publishing at the same moment into a local bare repo: all three landed (two after one retry)
+and `gh-pages` stayed one commit. Rejected: a shared publish concurrency group, because GitHub
+keeps only one waiting run per group and would silently cancel a queued province's publish.
+
+**Status.** Standing.
+
 ## 2026-09-28 — Scrape hourly; history keeps only the current state
 
 **Context.** The user asked for hourly runs once the repo was public. Each run appends a full
