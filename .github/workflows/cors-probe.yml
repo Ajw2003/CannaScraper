@@ -1,0 +1,67 @@
+name: CORS probe (temporary)
+
+# One-off research for Ajw2003/CannaScraper#7: which of the original app's
+# server-side features could a static page on ajw2003.github.io do directly
+# from the visitor's browser? A browser only lets a page read another site's
+# response if that site answers with Access-Control-Allow-Origin, and for a
+# POST with a JSON body it first sends an OPTIONS "preflight" that must be
+# allowed too. This sends exactly those requests, with the Pages origin, and
+# prints what each site answers. Delete this file once the results are recorded.
+
+on:
+  push:
+    paths:
+      - .github/workflows/cors-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ORIGIN: https://ajw2003.github.io
+    steps:
+      - name: Probe
+        run: |
+          set -uo pipefail
+          show() {  # label, then curl args
+            local label="$1"; shift
+            echo "=================== $label"
+            curl -sS -m 30 -D - -o body.txt -H "Origin: $ORIGIN" "$@" \
+              | grep -iE "^HTTP/|access-control|x-frame-options|content-security-policy|^server:|^content-type:" || true
+            echo "--- body (first 200 bytes): $(head -c 200 body.txt | tr '\n' ' ')"
+          }
+          STORE=3154   # Airdrie, Alberta, from stores.json
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+          # 1. Live check, index-style: the GET the scraper pages through.
+          show "stock API GET product/search" -A "$UA" \
+            "https://app.cannacabana.com/api/product/search?title=a&storeId=$STORE&limit=5&page=1&province=Alberta"
+
+          # 2. Live check, per-SKU: the POST the original "Check live now" used.
+          show "stock API preflight OPTIONS scan-multiple-items" -A "$UA" -X OPTIONS \
+            -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type" \
+            "https://app.cannacabana.com/api/product/scan-multiple-items/$STORE"
+          show "stock API POST scan-multiple-items" -A "$UA" -X POST \
+            -H "Content-Type: application/json" --data '{"skus":[]}' \
+            "https://app.cannacabana.com/api/product/scan-multiple-items/$STORE"
+
+          # 3. Catalogue refresh: Shopify's products.json.
+          show "catalogue GET products.json" -A "$UA" "https://cannacabana.com/products.json?limit=1&page=1"
+
+          # 4. Real-browser live check: could the page frame the product page?
+          show "product page headers (framing)" -A "$UA" "https://cannacabana.com/"
+
+          # 5. Postal-code lookup the restore plans to do from the browser.
+          show "Nominatim search" -A "$UA" "https://nominatim.openstreetmap.org/search?q=Saskatoon%2C+SK&format=json&limit=1&countrycodes=ca"
+
+          # 6. Starting a workflow run from the page (rebuild buttons): preflight.
+          show "GitHub API preflight OPTIONS workflow dispatch" -X OPTIONS \
+            -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: authorization,content-type" \
+            "https://api.github.com/repos/Ajw2003/CannaScraper/actions/workflows/scrape-one.yml/dispatches"
+          # Unauthenticated POST: expect 401/404, but it shows whether CORS headers come back.
+          show "GitHub API POST workflow dispatch (no token)" -X POST -H "Content-Type: application/json" \
+            --data '{"ref":"main","inputs":{"province":"Saskatchewan"}}' \
+            "https://api.github.com/repos/Ajw2003/CannaScraper/actions/workflows/scrape-one.yml/dispatches"
