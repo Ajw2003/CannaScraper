@@ -22,7 +22,16 @@ is in scope, and none needs the others' shape to trigger:
 What they share: after the change, the only features that exist are the ones someone
 **re-created**. Anything nobody listed is gone, and nothing in the diff says so, because a new file,
 a moved block or a split job doesn't show up as deleted lines. The restructure example is included
-because the same process gap applied there; whether it lost anything has **not** been checked.
+because the same process gap applied there. Checked afterwards (2026-09-28, old
+`scrape-province.yml` at `229a38d` against `scrape-one.yml` + `scrape-all.yml` +
+`ci/publish_gh_pages.sh`): nothing user-visible was lost; the five core scrape steps moved over
+byte-for-byte. Three small things were dropped without being mentioned: the verify step no longer
+fetches the page itself (`curl "$SITE"`), only `data/index.json`; each run's JSON is no longer
+kept as a downloadable Actions artifact (was `data-<slug>`, 3 days); and the publish log no longer
+says which provinces' data it kept or that it made the first publish. One maintenance cost was
+added: a new province now has to be added in two lists (`ALL_PROVINCES` in `scrape-all.yml` and the
+dispatch choices in `scrape-one.yml`) instead of one. So the gap was real, but the losses were
+minor, which is luck, not process.
 
 Out of scope: an ordinary edit that changes a few lines of an existing file. That's already
 visible in the diff, and `edit-place.md` covers it.
