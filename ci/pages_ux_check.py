@@ -57,7 +57,7 @@ with sync_playwright() as p:
     check(n == 50, f"empty box browses: {n} cards on load")
     first = pg.inner_text("#plist .p >> nth=0").replace("\n", " | "); print("first card:", first)
     check(" stores" in first or " store " in first, "card shows store count")
-    check("from $" in first, "card shows 'from $' price")
+    check("lowest $" in first and " at " in first, "card shows 'lowest $X at <store>'")
     print("more:", pg.inner_text("#more").replace("\n", " | "))
     pg.screenshot(path=f"{SHOTS}/ux-landing.png")
 
@@ -98,21 +98,25 @@ with sync_playwright() as p:
     pg.reload(); pg.wait_for_timeout(2500)
     check(pg.eval_on_selector("#prov", "e => e.value") == "Saskatchewan", "province remembered after reload")
 
-    # price order, member / Elite prices (user's request, 2026-09-28).
+    # price order and the lowest-price-at-a-store line (user's request, 2026-09-28).
     # Expectations come from the page's own /api/search, not fixed data.
     import re
-    def api(extra):
-        return pg.evaluate("""async (extra) => {
+    def api(extra, province="Saskatchewan"):
+        return pg.evaluate("""async ([extra, province]) => {
             const r = await fetch('/api/search?' + new URLSearchParams(Object.assign(
-                {q: '', limit: 50, offset: 0, province: 'Saskatchewan',
+                {q: '', limit: 50, offset: 0, province: province,
                  stocked_only: true, category: ''}, extra)));
             return (await r.json()).products;
-        }""", extra)
+        }""", [extra, province])
+    CARD = re.compile(r"lowest \$([0-9.,]+) at (.+?)(?: \((?:member|Elite)\))?$")
+    def card_lowest(t):
+        m = CARD.search(t.strip().split("\n")[-1])
+        return (float(m.group(1).replace(",", "")), m.group(2)) if m else None
     def froms():
         out = []
         for t in pg.eval_on_selector_all("#plist .p", "els => els.map(e => e.innerText)"):
-            m = re.search(r"from \$([0-9.,]+)", t)
-            out.append(float(m.group(1).replace(",", "")) if m else None)
+            c = card_lowest(t)
+            out.append(c[0] if c else None)
         return out
     def ordered(vals, sign):
         pr = [v for v in vals if v is not None]
@@ -122,26 +126,42 @@ with sync_playwright() as p:
     pg.fill("#q", "gummies"); pg.wait_for_timeout(1200)
     pg.select_option("#psort", "price_asc"); pg.wait_for_timeout(1500)
     v = froms(); print("gummies price_asc:", v[:8])
-    check(len(v) > 1 and ordered(v, 1), f"price low to high is non-decreasing, unpriced last ({len(v)} cards)")
+    check(len(v) > 1 and ordered(v, 1), f"price low to high is non-decreasing by the shown lowest, unpriced last ({len(v)} cards)")
     pg.select_option("#psort", "price_desc"); pg.wait_for_timeout(1500)
     v = froms(); print("gummies price_desc:", v[:8])
-    check(len(v) > 1 and ordered(v, -1), f"price high to low is non-increasing, unpriced last ({len(v)} cards)")
+    check(len(v) > 1 and ordered(v, -1), f"price high to low is non-increasing by the shown lowest, unpriced last ({len(v)} cards)")
     pg.screenshot(path=f"{SHOTS}/ux-price-desc.png")
 
     pg.fill("#q", "pre-roll"); pg.select_option("#psort", "price_asc"); pg.wait_for_timeout(1500)
     prods = api({"q": "pre-roll", "sort": "price_asc"})
     texts = pg.eval_on_selector_all("#plist .p", "els => els.map(e => e.innerText)")
     check(len(texts) == len(prods), f"sorted 'pre-roll' shows the API's first page ({len(texts)} cards)")
-    if any(x["member_from"] is not None for x in prods):
-        check(all(("member $" in t) == (x["member_from"] is not None) for t, x in zip(texts, prods)),
-              "member price shown iff API member_from is set")
-        check(any("member $" in t for t in texts), "at least one card shows 'member $'")
-    else:
-        print("SKIP no product on the first page has member_from")
-    check(all(("Elite $" in t) == (x["elite_from"] is not None) for t, x in zip(texts, prods)),
-          f"Elite price shown iff API elite_from is set ({sum(x['elite_from'] is not None for x in prods)} of {len(prods)})")
     pg.screenshot(path=f"{SHOTS}/ux-price-asc.png")
     pg.fill("#q", "")
+    # (a) each card's "lowest $X at <store>" is /api/search's lowest / lowest_store
+    for prov in ("Saskatchewan", "Alberta"):
+        pg.select_option("#prov", prov); pg.select_option("#psort", ""); pg.wait_for_timeout(1500)
+        prods = api({}, prov)
+        texts = pg.eval_on_selector_all("#plist .p", "els => els.map(e => e.innerText)")
+        bad = []
+        for t, x in zip(texts, prods):
+            c = card_lowest(t) if x["lowest"] is not None else None
+            want = (round(x["lowest"], 2), (x["lowest_store"] or "").strip()) if x["lowest"] is not None else None
+            if (c and (c[0], c[1]) != want) or (want and not c) or (not want and "lowest $" in t):
+                bad.append((t.split("\n")[-1], want))
+        n_priced = sum(x["lowest"] is not None for x in prods)
+        check(len(texts) == len(prods) and n_priced > 0 and not bad,
+              f"{prov}: every card shows 'lowest $X at <store>' matching the API ({n_priced} of {len(prods)} priced) {bad[:2]}")
+    # (b) product page, whole province: the named store is a row with that bold price
+    pg.select_option("#top", "all")
+    card0 = pg.query_selector("#plist .p"); t0 = card0.inner_text(); c0 = card_lowest(t0)
+    card0.click(); pg.wait_for_timeout(2000)
+    rows = pg.eval_on_selector_all("#out .r", "els => els.map(e => [e.querySelector('.who b').innerText, e.querySelector('.pr b') ? e.querySelector('.pr b').innerText : null])")
+    check(c0 is not None and any(n == c0[1] and pr == f"${c0[0]:.2f}" for n, pr in rows),
+          f"product page (whole province) lists {c0 and c0[1]} at bold ${c0 and c0[0]} as on the card ({len(rows)} rows)")
+    pg.click("#back"); pg.wait_for_timeout(1000)
+    pg.select_option("#top", "10")
+    pg.select_option("#prov", "Saskatchewan"); pg.select_option("#psort", "price_asc"); pg.wait_for_timeout(1500)
     pg.reload(); pg.wait_for_timeout(2500)
     check(pg.eval_on_selector("#psort", "e => e.value") == "price_asc", "price order remembered after reload")
     pg.select_option("#psort", ""); pg.wait_for_timeout(800)

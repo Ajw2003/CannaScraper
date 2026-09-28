@@ -133,20 +133,19 @@ the code and sits on top of the original page without changing what the original
 | "← Back to search" returns to the same list, scrolled to the card that was opened; opening a product brings it into view | `index.html:render`, `load` | list length and card position kept |
 | Cards wrap at phone width instead of pushing the page sideways (the original overflowed by 113 px at 390 px wide with results showing) | `index.html` CSS | no sideways scroll at 390 px |
 
-Parity after these: `ci/parity_check.py` 67 of 67 requests identical to the old server (the two
-added search fields, `stores` and `price_from`, are excluded by name).
+Parity after these: `ci/parity_check.py` 67 of 67 requests identical to the old server (the added
+search fields, `stores` and, from 2026-09-28, `lowest` / `lowest_store` / `lowest_tier`, are excluded by name).
 
 ### Added at the user's request (2026-09-28)
 
-The user asked for the member price and Elite price (where there is one) on the search cards,
-and for searched items to be orderable by price. Marked "added on the Pages site" in the code.
+The user asked for the member price and Elite price on the search cards, and for searched items to be orderable by price. Marked "added on the Pages site" in the code.
 
 | Addition | Where | Test |
 |---|---|---|
-| Card line also shows " · member $Y" and " · Elite $Z" (lowest member / ELITE tier price among in-stock rows; each only when the product has one) | `static-api.js:provinceFacts` (`member_from`, `elite_from`), `apiSearch`; `index.html:card` | `ux_test`: member shown iff API `member_from`, Elite iff `elite_from` |
-| "Order of the products" select after the category: Best match / Price: low to high / high to low. Sorts the whole filtered list by `price_from` before paging; no price always last; ties keep the old order; remembered on the device | `static-api.js:apiSearch` (`sort` param); `index.html` `#psort`, `search`, provinces() | `ux_test`: cards non-decreasing / non-increasing, order kept after reload |
+| Card line "N stores · lowest $X at <Store>" plus " (member)" or " (Elite)" when that price is a tier price: the lowest price paid (`tier_amt`, else shelf price, i.e. the product page's bold price) among in-stock rows in the province, with that store's name; ties go to the first store in the data. Replaces the earlier "from $X · member $Y · Elite $Z" (changed 2026-09-28: the user found the card's member prices did not match the local listings, because the value was the province's lowest, from a far store with no name shown) | `static-api.js:provinceFacts` (`lowest`, `lowest_store`, `lowest_tier`), `apiSearch`; `index.html:card` | `pages_ux_check`: card matches API `lowest` / `lowest_store` (Saskatchewan, Alberta); the named store appears on the product page (whole province) at that bold price |
+| "Order of the products" select after the category: Best match / Price: low to high / high to low. Sorts the whole filtered list by `lowest` before paging; no price always last; ties keep the old order; remembered on the device | `static-api.js:apiSearch` (`sort` param); `index.html` `#psort`, `search`, provinces() | `ux_test`: cards non-decreasing / non-increasing, order kept after reload |
 
-Parity: `member_from` and `elite_from` are excluded by name like `stores` and `price_from`
+Parity: `lowest`, `lowest_store` and `lowest_tier` are excluded by name like `stores`
 (`ci/parity_check.py:normalize`); without `sort` the answer is unchanged. Screenshots:
 `docs/generated/price-sort/`.
 

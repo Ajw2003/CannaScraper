@@ -230,12 +230,11 @@ function card(p){
         p.thc ? `<span class="pot">THC ${esc(p.thc)}</span>` : ''}${
         p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}${
         p.stores ? `<br>${p.stores} store${p.stores === 1 ? '' : 's'}${
-          p.price_from !== null && p.price_from !== undefined
-            ? ` · from <span class="from">${money(p.price_from)}</span>` : ''}${
-          // Added on the Pages site (user's request, 2026-09-28).
-          p.member_from != null ? ` · member ${money(p.member_from)}` : ''}${
-          p.elite_from != null
-            ? ` · <span style="color:var(--elite)">Elite ${money(p.elite_from)}</span>` : ''}` : ''}</div></div>
+          p.lowest !== null && p.lowest !== undefined
+            ? ` · lowest <b class="from">${money(p.lowest)}</b>${p.lowest_store ? ` at ${esc(p.lowest_store)}` : ''}${
+              // Changed 2026-09-28 (user's request): one number the product page shows.
+              p.lowest_tier === 'ELITE' ? ' <span style="color:var(--elite)">(Elite)</span>'
+              : p.lowest_tier === 'member' ? ' <span style="color:var(--mut)">(member)</span>' : ''}` : ''}` : ''}</div></div>
     </button>`;
 }
 

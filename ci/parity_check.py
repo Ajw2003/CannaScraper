@@ -70,11 +70,11 @@ def normalize(d, path=""):
             if k in ("rate", "egress"):
                 continue
             # Added to search results on the Pages site (approved
-            # 2026-09-28, docs/plans/restore-original-page.md): store count,
-            # lowest price, and the member / Elite prices; the old server
-            # has no equivalent to compare against.
+            # 2026-09-28, docs/plans/restore-original-page.md): in-stock store
+            # count, and the lowest paid price with its store and tier; the
+            # old server has no equivalent to compare against.
             if path.endswith(".products") and k in (
-                    "stores", "price_from", "member_from", "elite_from"):
+                    "stores", "lowest", "lowest_store", "lowest_tier"):
                 continue
             if k in ROUND_H_KEYS and isinstance(v, (int, float)):
                 out[k] = round(v, 1)

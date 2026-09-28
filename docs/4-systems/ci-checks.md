@@ -88,11 +88,13 @@ Every expectation comes from the same API the page itself calls:
 - "back restores list length": compared to the count captured before the card was opened, not a
   fixed `100`.
 
-- price order and member / Elite prices: cards under `price_asc` / `price_desc` are checked for
-  order (unpriced last); "member $" / "Elite $" must appear exactly when `/api/search` returns
-  `member_from` / `elite_from` for that product (Saskatchewan, "pre-roll").
+- price order and the card's "lowest $X at <store>": cards under `price_asc` / `price_desc` are
+  checked for order by the displayed lowest (unpriced last); on the first page of a Saskatchewan
+  and an Alberta search each card must show `/api/search`'s `lowest` (2 decimals) and
+  `lowest_store`; and one opened product (scope "Whole province") must list that store with that
+  bold price.
 
-Everything else it checks (card shows a price, store rows have "view" links, no sideways scroll
+Everything else it checks (card shows a lowest price and store, store rows have "view" links, no sideways scroll
 at phone width, the failed-store notice, province remembered after reload) is about the page's
 *code*, not the data, so those stayed as they were.
 
