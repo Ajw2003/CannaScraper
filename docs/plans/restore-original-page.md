@@ -109,6 +109,13 @@ From the restructure check (`docs/plans/house-rules-guard-silent-feature-loss.md
 verify step fetches the page itself again; each run's JSON is uploaded as a 3-day Actions artifact
 again; the publish log says again which data it kept and when it makes the first publish.
 
+## Changes from the original the user approved
+
+- **A failed store in a live check is reported** (2026-09-28). The original swallowed a store's
+  scan failure (it became an ignored error row) and ended the job "Done."; the static page
+  reports it on the job, so the page shows "Some stores failed: <store>: <reason>". The failed
+  store still keeps its previous data, as before. Test: `ci/live_parity_check.py` expects this.
+
 ## Proposed improvements — NOT built, awaiting the user
 
 1. Show the data's age at the top of the page, before any product is opened.
