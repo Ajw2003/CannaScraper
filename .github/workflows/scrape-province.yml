@@ -36,15 +36,10 @@ on:
           - Manitoba
           - British Columbia
         default: default
-  # Scheduled and manual runs only exist once this file is on the default
-  # branch, so a push that changes the pipeline also runs it. That is how it
-  # is tested from a branch.
-  push:
-    paths:
-      - .github/workflows/scrape-province.yml
-      - ci/export_province.py
-      - ci/prune_history.py
-      - site/**
+  # No push trigger: a merge must not start a full scrape (~50 min of
+  # requests to the site) just to change code. Page-only changes go live via
+  # publish-site.yml; a pipeline change takes effect on the next hourly run,
+  # or start one by hand from the Actions tab.
 
 permissions:
   contents: write     # push gh-pages, create and upload the history release

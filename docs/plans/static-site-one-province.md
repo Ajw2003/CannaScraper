@@ -33,8 +33,10 @@ that scraped one province does not drop the others' files.
 3. `.github/workflows/scrape-province.yml` — `plan` job builds the province matrix (dispatch
    input, or the default list); `scrape` job per province restores history, runs
    `index_builder.py`, exports, uploads history; `publish` job assembles `gh-pages` and pushes.
-   Runs daily, on dispatch, and on pushes that touch these files (so it can be tested from a
-   branch before merge — scheduled runs only fire from the default branch).
+   Runs hourly and on manual dispatch. *(Until 2026-09-28 it also ran on every push touching the
+   pipeline or `site/`; that made each merge start a full ~50-minute scrape, so it was removed.
+   Page-only changes now go live through `.github/workflows/publish-site.yml`, which republishes
+   `site/` over the existing data without scraping.)*
 
 ## Out of scope for this step
 
