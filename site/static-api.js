@@ -428,7 +428,14 @@
       const category = (data.products[sku] && data.products[sku].category) || '';
       const thc = spanFromValues(rows.map(r => r.thc));
       const cbd = spanFromValues(rows.map(r => r.cbd));
-      facts[sku] = { available, category, thc, cbd };
+      // Added on the Pages site (approved 2026-09-28): how many stores in
+      // the province have it, and the lowest shelf price among them, for
+      // the search cards. Not part of the original server's answer.
+      const inStock = rows.filter(r => r.available);
+      const prices = inStock.map(r => r.price).filter(v => v !== null && v !== undefined);
+      facts[sku] = { available, category, thc, cbd,
+                     stores: inStock.length,
+                     price_from: prices.length ? Math.min(...prices) : null };
     }
     _factsCache.set(province, facts);
     return facts;
@@ -632,10 +639,13 @@
     const stockedOnly = (params.get('stocked_only') ?? 'true') !== 'false';
     const category = params.get('category');
 
-    if (!q.trim()) return { products: [], total: 0, offset: 0, hidden: 0, filtered: false };
-
     const catalog = (await loadCatalog()).products;
-    let hits = catalogSearch(q, catalog);
+    // Added on the Pages site (approved 2026-09-28): an empty search box
+    // browses the whole catalogue, A to Z, through the same province and
+    // category filters. The original server answered an empty search with
+    // nothing.
+    let hits = q.trim() ? catalogSearch(q, catalog)
+      : [...catalog].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
 
     const seen = new Set(), uniq = [];
     for (const v of hits) {
@@ -670,6 +680,8 @@
           sku: v.sku, title: v.title, brand: v.brand, size: v.size,
           category: f.category || v.category,
           in_stock: !!f.available,
+          stores: f.stores || 0,
+          price_from: f.price_from === undefined ? null : f.price_from,
           thc: potencySpan(f.thc, f.category || ''),
           cbd: potencySpan(f.cbd, f.category || ''),
           image: thumb(v.image, 160),
@@ -855,6 +867,23 @@
     return { provinces, busy: false, active: [], running: null, rate: {}, egress: [] };
   }
 
+  // Added on the Pages site (approved 2026-09-28): when the province's data
+  // was published and which stores failed on its last run, for the line
+  // under the heading. The original server has no such route; on it the
+  // page simply shows nothing there.
+  async function apiProvinceSummary(params) {
+    const prov = params.get('province') || DEFAULT_PROVINCE;
+    let data;
+    try { data = await loadProvince(prov); }
+    catch (e) { return { __status: 404, error: `No data published for ${prov} yet.` }; }
+    const run = data.run || {};
+    return {
+      province: prov, generated_at: data.generated_at || null,
+      age_hours: data.generated_at ? (Date.now() - Date.parse(data.generated_at)) / 3600000 : null,
+      failed: run.failed || 0, failed_stores: run.failed_stores || [],
+    };
+  }
+
   function notAvailable() {
     return { __status: 404, error: 'Not available on the static site.' };
   }
@@ -900,6 +929,7 @@
       case 'catalog/status': return apiCatalogStatus();
       case 'build/status': return apiBuildStatus();
       case 'index/status': return apiIndexStatus();
+      case 'province/summary': return apiProvinceSummary(params);
       default: return notAvailable();
     }
   }

@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import db  # noqa: E402  (needs the repo root on sys.path first)
 import stores as S  # noqa: E402
+import workqueue  # noqa: E402
 
 
 def tier_price(row: dict) -> tuple[str, float | None]:
@@ -82,19 +83,26 @@ def main(argv=None) -> int:
     store_list = S.get_stores(province=args.province)
     store_ids = [s["store_id"] for s in store_list]
 
+    run_summary = None
+    if args.run_summary:
+        run_summary = json.loads(Path(args.run_summary).read_text(encoding="utf-8"))
+
     conn = db.connect(args.db)
     try:
         rows = db.latest_observations(conn, store_ids=store_ids)
+        # The page names the stores that failed on the last run, so a reader
+        # knows whose numbers are older. The count alone doesn't say which.
+        if run_summary and run_summary.get("run_id"):
+            workqueue.ensure(conn)
+            run_summary["failed_stores"] = [
+                f["name"] or f["store_id"]
+                for f in workqueue.failures(conn, run_summary["run_id"])]
     finally:
         conn.close()
 
     if not rows:
         print(f"error: no rows for {args.province} in {args.db}", file=sys.stderr)
         return 1
-
-    run_summary = None
-    if args.run_summary:
-        run_summary = json.loads(Path(args.run_summary).read_text(encoding="utf-8"))
 
     # Per-store newest scraped_at, from rows only (a store with zero rows
     # simply has no timestamp -- it was not reached, or nothing was in stock).

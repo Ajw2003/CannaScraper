@@ -62,6 +62,11 @@ def normalize(d, path=""):
         for k, v in d.items():
             if k in ("rate", "egress"):
                 continue
+            # Added to search results on the Pages site (approved
+            # 2026-09-28, docs/plans/restore-original-page.md); the old
+            # server has no equivalent to compare against.
+            if path.endswith(".products") and k in ("stores", "price_from"):
+                continue
             if k in ROUND_H_KEYS and isinstance(v, (int, float)):
                 out[k] = round(v, 1)
             else:
