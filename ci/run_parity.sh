@@ -94,8 +94,8 @@ OLD_PID=""
 STATIC_PID=""
 cleanup() {
   local status=$?
-  [ -n "$OLD_PID" ] && kill "$OLD_PID" 2>/dev/null || true
-  [ -n "$STATIC_PID" ] && kill "$STATIC_PID" 2>/dev/null || true
+  if [ -n "$OLD_PID" ]; then kill "$OLD_PID" 2>/dev/null || true; fi
+  if [ -n "$STATIC_PID" ]; then kill "$STATIC_PID" 2>/dev/null || true; fi
   wait "$OLD_PID" 2>/dev/null || true
   wait "$STATIC_PID" 2>/dev/null || true
   exit "$status"
