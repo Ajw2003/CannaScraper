@@ -2,10 +2,19 @@
 
 Built for the scheduled scrape (.github/workflows/scrape-one.yml): after
 a run finishes, this reads the history DB it wrote to and produces
-`data/<slug>.json` -- the file the static site (site/index.html) fetches at
-runtime. It never talks to the network itself; everything comes from the
-history DB and the committed stores.json (via stores.get_stores), same as the
-CLI and the web server.
+`data/<slug>.json` -- the file the static site (site/index.html, via
+site/static-api.js) fetches at runtime. It never talks to the network
+itself; everything comes from the history DB and the committed stores.json
+(via stores.get_stores), same as the CLI and the web server.
+
+Sold-out rows are kept (not just in-stock ones): the static site's port of
+db.province_facts (static-api.js) needs the newest row per (sku, store)
+INCLUDING sold-out rows to compute "in stock anywhere", category and
+THC/CBD spans the same way server.py does, and the product page needs them
+to tell "not in stock" apart from "not checked". Each stock row therefore
+carries `available` (0/1) and `stock_text` appended after the original 7
+fields, so an older export (from before this changed) still has its first 7
+fields at the same positions.
 
     python ci/export_province.py --province Saskatchewan --db PATH --out DIR \
         [--run-summary run.json]
@@ -79,10 +88,8 @@ def main(argv=None) -> int:
     finally:
         conn.close()
 
-    rows = [r for r in rows if r.get("available")]
-
     if not rows:
-        print(f"error: no in-stock rows for {args.province} in {args.db}", file=sys.stderr)
+        print(f"error: no rows for {args.province} in {args.db}", file=sys.stderr)
         return 1
 
     run_summary = None
@@ -126,9 +133,13 @@ def main(argv=None) -> int:
             }
         tier_label, tier_amt = tier_price(r)
         price = r.get("api_price") or r.get("price")
+        # Appended, not inserted: the first 7 fields keep their old positions
+        # so a page that still expects the pre-sold-out-rows shape can treat
+        # a missing `available` as available=1 (see static-api.js).
         stock.setdefault(sku, []).append([
             r["store_id"], r.get("api_stock"), price,
             tier_label, tier_amt, r.get("thc"), r.get("cbd"),
+            1 if r.get("available") else 0, r.get("stock_text"),
         ])
 
     out = {
