@@ -1,0 +1,160 @@
+name: Checks
+
+# Regression checks run on every pull request and on push to main. Separate
+# jobs so each shows as its own status check. None of these scrape or call
+# cannacabana.com / app.cannacabana.com: every request that would reach them
+# is stubbed (parity/page-additions/export-shape use a fixture DB and stub
+# the one live-scan endpoint) or is simply never made (syntax/shell/workflows
+# jobs run no scraping code at all). See docs/4-systems/ci-checks.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACTIONLINT_VERSION: '1.7.7'
+
+jobs:
+  workflows:
+    name: workflows / actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actionlint ${{ env.ACTIONLINT_VERSION }}
+        run: |
+          set -euo pipefail
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) "$ACTIONLINT_VERSION"
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          ./actionlint -color || { echo "::error::actionlint found problems in the workflow files above"; exit 1; }
+
+  shell:
+    name: shell / bash -n, shellcheck, chain script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n every ci/*.sh
+        run: |
+          set -euo pipefail
+          status=0
+          for f in ci/*.sh; do
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; status=1; }
+          done
+          exit $status
+      - name: shellcheck ci/*.sh
+        run: |
+          set -euo pipefail
+          shellcheck -x -P ci ci/*.sh || { echo "::error::shellcheck found problems above"; exit 1; }
+      - name: chain script behavioural tests
+        run: |
+          set -euo pipefail
+          bash ci/test_chain_scripts.sh || { echo "::error::ci/test_chain_scripts.sh failed"; exit 1; }
+
+  syntax:
+    name: syntax / python, node, selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: python -m compileall
+        run: |
+          set -euo pipefail
+          python -m compileall -q -x '(^|/)(raw|__pycache__)/' . \
+            || { echo "::error::compileall found a syntax error above"; exit 1; }
+      - name: node --check site/static-api.js
+        run: |
+          set -euo pipefail
+          node --check site/static-api.js || { echo "::error file=site/static-api.js::node --check failed"; exit 1; }
+      - name: pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt
+      - name: python selftest.py
+        run: |
+          set -euo pipefail
+          python selftest.py || { echo "::error::selftest.py reported failures above (no network is used)"; exit 1; }
+
+  pages-in-step:
+    name: pages-in-step
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: web/index.html and site/index.html must change together
+        run: |
+          set -euo pipefail
+          bash ci/check_pages_in_step.sh "origin/${{ github.base_ref }}"
+
+  parity:
+    name: parity / old server vs static site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install Python deps + Playwright Chromium
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt
+          python -m pip install playwright==1.62.0
+          python -m playwright install --with-deps chromium
+      - name: Run parity checks (fixture DB, export, both servers)
+        run: |
+          set -euo pipefail
+          bash ci/run_parity.sh "$RUNNER_TEMP/parity" \
+            || { echo "::error::parity checks failed -- see ci/run_parity.sh output above"; exit 1; }
+
+  page-additions:
+    name: page-additions / pages UX walkthrough
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install Playwright Chromium
+        run: |
+          set -euo pipefail
+          python -m pip install playwright==1.62.0
+          python -m playwright install --with-deps chromium
+      - name: Run the pages UX walkthrough against gh-pages data + this branch's site/
+        run: |
+          set -euo pipefail
+          bash ci/run_pages_ux.sh "$RUNNER_TEMP/pages-ux" \
+            || { echo "::error::ci/pages_ux_check.py failed -- see output above, screenshots in $RUNNER_TEMP/pages-ux/shots"; exit 1; }
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-ux-screenshots
+          path: ${{ runner.temp }}/pages-ux/shots
+          if-no-files-found: ignore

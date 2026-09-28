@@ -109,6 +109,17 @@ the chain, and GitHub's schedule only restarts the watchdog (`docs/4-systems/hou
 Tested locally: actionlint clean, `ci/test_chain_scripts.sh` 9/9 with a stub `gh`. **Not yet run
 on GitHub.** A manual full scrape was started 16:05 UTC.
 
+M7, CI checks (2026-09-28, branch `claude/ci-checks`, not merged). Added `.github/workflows/checks.yml`
+("Checks"), running on every pull request and push to `main` as six jobs: actionlint, shell
+(shellcheck + `ci/test_chain_scripts.sh`), syntax (compileall/node --check/selftest), `web/`-vs-`site/`
+in step, a parity run against a fixture Saskatchewan DB, and a data-independent walkthrough of the
+Pages additions (see `docs/4-systems/ci-checks.md`). Verified locally, each check twice: `parity`
+(`ci/run_parity.sh` against `history-saskatchewan.db`) **no mismatches** over 67 requests and **0 with
+differences** on 4 live checks, both runs; `page-additions` (`ci/run_pages_ux.sh` against real
+`gh-pages` data) **0 failures**, both runs; `ci/check_pages_in_step.sh` correct in both the failing
+and passing case; `selftest.py` 40/40; `ci/test_chain_scripts.sh` 9/9; actionlint and shellcheck
+clean. **Not yet run:** anything on GitHub Actions itself (the workflow has not been pushed/merged).
+
 ## The one thing that is not what it looks like
 
 **The egress pool reads as a completed throughput feature, but ships disabled by default and

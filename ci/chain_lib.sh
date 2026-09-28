@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Shared helpers for the scrape chain and its watchdog: checking whether a
 # workflow has an active run, and dispatching a workflow with retries so a
 # single flaky API call doesn't drop the chain.

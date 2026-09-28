@@ -29,13 +29,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
 
 from playwright.sync_api import sync_playwright
 
-CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+# CHROME_PATH overrides which Chromium binary Playwright launches. Unset, we
+# fall back to the sandbox's pre-fetched build if present, else Playwright's
+# own bundled Chromium (no executable_path -- `playwright install` handles it).
+_SANDBOX_CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+CHROME = os.environ.get("CHROME_PATH") or (
+    _SANDBOX_CHROME if os.path.exists(_SANDBOX_CHROME) else None
+)
 
 
 def old_get(base: str, path: str) -> tuple[int, dict]:
@@ -105,7 +112,9 @@ def main() -> int:
     args = ap.parse_args()
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROME, headless=not args.headed)
+        browser = pw.chromium.launch(
+            **({"executable_path": CHROME} if CHROME else {}), headless=not args.headed
+        )
         page = browser.new_page()
         page.goto(args.static + "/index.html")
         page.wait_for_timeout(300)   # let static-api.js install its fetch wrapper
