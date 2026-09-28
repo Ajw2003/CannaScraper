@@ -121,7 +121,7 @@ differences** on 4 live checks, both runs; `page-additions` (`ci/run_pages_ux.sh
 and passing case; `selftest.py` 40/40; `ci/test_chain_scripts.sh` 9/9; actionlint and shellcheck
 clean. **On GitHub (PR #18, run 36472860741, 2026-09-28 19:31–19:35 UTC):** all six jobs green; parity downloaded the release DB, 67 requests no mismatches, 4 live checks 0 differences. The first run failed only on shellcheck SC2015 (the runner's shellcheck flags it, the local one did not), fixed in `086abd6`. The next run failed `selftest.py` step 33 on a slow runner (a wall-clock speedup ratio that also counted database time, 1.2x); it now checks overlapping fetches instead (fails with 1 worker, passes 5/5 with 3).
 
-M7, publishing (2026-09-28): after PR #19 went live a phone showed the new price menu without member prices or sorting: it kept `static-api.js` cached (Pages lets browsers keep files 10 min) while loading the new `index.html`. `ci/publish_gh_pages.sh` now names the script by a hash of its content (`static-api.js?v=<12 hex>`); tested by publishing into a scratch repo.
+M7, publishing (2026-09-28): after PR #19 went live a phone showed the new price menu without member prices or sorting: it kept `static-api.js` cached (Pages lets browsers keep files 10 min) while loading the new `index.html`. `ci/publish_gh_pages.sh` now names the script by a hash of its content (`static-api.js?v=<12 hex>`); tested by publishing into a scratch repo. The stamp lives in `ci/stamp_page.sh`, which `publish-site.yml`'s verify step also uses to build the expected page (without it, that byte-for-byte check would fail every publish); published and expected hashes matched in the scratch test.
 
 ## The one thing that is not what it looks like
 
