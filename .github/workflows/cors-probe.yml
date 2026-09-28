@@ -65,3 +65,65 @@ jobs:
           show "GitHub API POST workflow dispatch (no token)" -X POST -H "Content-Type: application/json" \
             --data '{"ref":"main","inputs":{"province":"Saskatchewan"}}' \
             "https://api.github.com/repos/Ajw2003/CannaScraper/actions/workflows/scrape-one.yml/dispatches"
+
+  # Headers can say one thing and a browser do another, so repeat the key
+  # requests from a real Chromium, on the live Pages site, as page script.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Playwright and Chromium
+        run: |
+          pip install -q playwright==1.56.0
+          python -m playwright install --with-deps chromium >/dev/null
+      - name: Fetch from the live Pages origin
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          PROBES = r"""
+          async () => {
+            const out = {};
+            async function t(name, url, opts) {
+              try {
+                const r = await fetch(url, opts);
+                const text = await r.text();
+                out[name] = `HTTP ${r.status}, readable, ${text.length} bytes: ${text.slice(0, 90)}`;
+              } catch (e) { out[name] = `BLOCKED: ${e}`; }
+            }
+            await t('stock GET product/search',
+              'https://app.cannacabana.com/api/product/search?title=a&storeId=3154&limit=5&page=1&province=Alberta');
+            await t('stock POST scan-multiple-items',
+              'https://app.cannacabana.com/api/product/scan-multiple-items/3154',
+              {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"skus":[]}'});
+            await t('catalogue GET products.json', 'https://cannacabana.com/products.json?limit=1&page=1');
+            await t('Nominatim search',
+              'https://nominatim.openstreetmap.org/search?q=Saskatoon%2C+SK&format=json&limit=1&countrycodes=ca');
+            await t('GitHub POST dispatch (no token)',
+              'https://api.github.com/repos/Ajw2003/CannaScraper/actions/workflows/scrape-one.yml/dispatches',
+              {method: 'POST', headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer invalid'},
+               body: '{"ref":"main","inputs":{"province":"Saskatchewan"}}'});
+            return out;
+          }
+          """
+          with sync_playwright() as p:
+              b = p.chromium.launch()
+              pg = b.new_page()
+              pg.goto("https://ajw2003.github.io/CannaScraper/")
+              print("page origin:", pg.evaluate("location.origin"))
+              for k, v in pg.evaluate(PROBES).items():
+                  print(f"{k:<34} {v}")
+              # Framing: load a cannacabana page in an iframe and see if it renders.
+              pg.set_content('<iframe id="f" src="https://cannacabana.com/" width="400" height="300"></iframe>')
+              pg.wait_for_timeout(5000)
+              try:
+                  fr = pg.frames[1] if len(pg.frames) > 1 else None
+                  # A frame the browser refused shows as chrome-error://, not the site.
+                  print("iframe of cannacabana.com: frame url =", fr.url if fr else "no frame",
+                        "| body text length =", fr.evaluate("document.body ? document.body.innerText.length : -1") if fr else "-")
+              except Exception as e:
+                  print("iframe of cannacabana.com:", type(e).__name__, str(e)[:120])
+              b.close()
+          PY
