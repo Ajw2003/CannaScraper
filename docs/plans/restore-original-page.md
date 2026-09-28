@@ -55,6 +55,39 @@ equivalent, listed so nothing changes silently.
 | Note text "…rebuilding needs the password." | `web/index.html` | **Closest:** reworded to say rebuilds run automatically every hour; nothing else in the note changes |
 | Stale-build banner + "Rebuild and restart" | `server.py:api_build_status` | Same behaviour as a non-packaged run: hidden (`frozen: false`) |
 
+## Verified: what a page on github.io can actually do (2026-09-28)
+
+The **Closest** rows above were first written as assumptions. They were then tested from a GitHub
+Actions runner in two ways: `curl` with `Origin: https://ajw2003.github.io` (headers), and real
+Chromium loaded on the live site running `fetch()` as page script (run 36376135472, job
+108782246147; the probe workflow was temporary and has been removed).
+
+| Request | Headers | Real browser on the Pages origin | Conclusion |
+|---|---|---|---|
+| Stock API `GET /api/product/search` | `Access-Control-Allow-Origin: *` | HTTP 200, readable | Allowed |
+| Stock API `POST /api/product/scan-multiple-items/<store>` (the original live check) | Preflight 204, allows POST + `content-type` | HTTP 200, readable | **Live check can come back**, run from the visitor's browser |
+| Catalogue `GET cannacabana.com/products.json` | `access-control-allow-origin: *` | HTTP 200, readable | **Catalogue refresh can come back** in the browser (refreshes that visitor's copy) |
+| OpenStreetMap Nominatim search | `access-control-allow-origin: *` | HTTP 200, readable | City/postal lookup works as planned |
+| GitHub API `POST …/actions/workflows/scrape-one.yml/dispatches` | Preflight 204, allows `Authorization` | HTTP 401 "Bad credentials", readable | **Rebuild / resume / cancel can come back with a GitHub token** entered on the page; without one, not |
+| `cannacabana.com` in an iframe | `x-frame-options: DENY`, `frame-ancestors 'none'` | Frame shows `chrome-error://chromewebdata/` | **"Live: real browser" cannot come back** from the page |
+
+Corrections to the inventory above:
+
+- **Live check ("Live: fast API")** — was listed as needing a server. It doesn't: the same request
+  the server made works from the visitor's browser. It runs from the visitor's IP address and
+  against their own 60-requests-a-minute allowance, instead of the host machine's. Restoring it is
+  on-script (it's the original feature).
+- **"Live: real browser"** — confirmed impossible from a page (framing refused; a page can't drive
+  another site). It could only run as a GitHub Actions job.
+- **"Refresh catalogue"** — possible in the browser, but it would refresh only that visitor's copy;
+  refreshing the published catalogue for everyone needs the token route below.
+- **Rebuild / Resume / Start over / Cancel, progress, and the admin password** — possible if the
+  person using them pastes a GitHub token (fine-grained, Actions read/write on this repo only) into
+  the page, which then starts and watches `scrape-one.yml` runs through GitHub's API. That's a
+  different mechanism from the original password and stores a token in the browser, so it's a
+  **proposal for the user**, not part of the restore.
+- **Stale-build banner** — not applicable: there's no packaged build to go stale.
+
 ## Data the page needs (all published to `gh-pages/data/`)
 
 - `index.json` — province manifest (exists), plus each province's store count and last-run summary.
