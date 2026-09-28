@@ -120,6 +120,12 @@ def main(argv=None) -> int:
 
     products: dict[str, dict] = {}
     stock: dict[str, list] = {}
+    # Each row's own scrape time, stored once in `times` and referenced by
+    # index: a store's rows are not all written at the same instant, and the
+    # page's "this product last checked" (db.cache_age_hours) reads the row's
+    # time, not the store's. A shared table keeps the file small.
+    times: list[str] = []
+    time_index: dict[str, int] = {}
     for r in rows:
         sku = str(r["sku"])
         if sku not in products:
@@ -140,7 +146,11 @@ def main(argv=None) -> int:
             r["store_id"], r.get("api_stock"), price,
             tier_label, tier_amt, r.get("thc"), r.get("cbd"),
             1 if r.get("available") else 0, r.get("stock_text"),
+            time_index.setdefault(r.get("scraped_at") or "", len(time_index)),
+            r.get("carried"),
         ])
+        if len(times) < len(time_index):
+            times.append(r.get("scraped_at") or "")
 
     out = {
         "province": args.province,
@@ -149,6 +159,7 @@ def main(argv=None) -> int:
         "stores": stores_out,
         "products": products,
         "stock": stock,
+        "times": times,
     }
 
     out_dir = Path(args.out)

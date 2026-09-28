@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import catalog  # noqa: E402  (needs the repo root on sys.path first)
 import config  # noqa: E402
+import scrape  # noqa: E402  (scrape._cannabinoids: the live check's THC/CBD source)
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -85,12 +86,25 @@ def main(argv=None) -> int:
             # as fetchers/api_fetcher.py.
             "variant_id": v.get("variant_id"),
         })
+        # A live check's row takes THC/CBD from the catalogue text, not the
+        # scan (fetchers/api_fetcher.py:_row -> scrape._cannabinoids). The
+        # page can't run that regex over body_html it doesn't have, so the
+        # result is published instead; empty values are left out to save space.
+        thc, cbd = scrape._cannabinoids(v)
+        if thc:
+            products[-1]["thc"] = thc
+        if cbd:
+            products[-1]["cbd"] = cbd
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     out_path = out_dir / "catalog.json"
-    text = json.dumps({"generated_at": generated_at, "products": products},
+    # The live check's skip list (config.SCAN_SKIP_STORES; see
+    # fetchers.partition_scannable) travels with the catalogue so the page
+    # skips the same stores the app did.
+    text = json.dumps({"generated_at": generated_at, "products": products,
+                       "scan_skip_stores": sorted(str(s) for s in config.SCAN_SKIP_STORES)},
                       separators=(",", ":"), ensure_ascii=False)
     out_path.write_text(text, encoding="utf-8")
 

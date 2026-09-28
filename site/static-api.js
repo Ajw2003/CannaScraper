@@ -35,6 +35,8 @@
   const CATALOG_MAX_AGE_H = 24;
   const API_BASE = 'https://app.cannacabana.com/api';
   const API_RATE_PER_MIN = 50;     // config.py:API_RATE_PER_MIN
+  const API_MAX_RETRIES = 3;       // config.py:API_MAX_RETRIES
+  const SCAN_SKIP_RETRY_DAYS = 7;  // config.py:SCAN_SKIP_RETRY_DAYS
   const API_CONCURRENCY = 6;       // config.py:API_CONCURRENCY
 
   // Live-check results for this visitor only (never persisted -- the original
@@ -208,25 +210,60 @@
     };
   }
 
-  async function scanStore(storeId, sku, variantId) {
+  async function scanStore(storeId, sku, variantId, product) {
     // fetchers/api_fetcher.py:ApiFetcher._call + _row, for one SKU.
     const url = `${API_BASE}/product/scan-multiple-items/${storeId}`;
-    const r = await originalFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ skus: [{ [sku]: variantId }] }),
-    });
-    const body = await r.json().catch(() => ({}));
-    const data = (body && body.data) || {};
+    // api_fetcher._call's retry loop (config.API_MAX_RETRIES). Only a 200
+    // carrying a `data` object is an answer; anything else ends as an error,
+    // which there becomes an error row that latest_observations ignores, so
+    // the store keeps its previous data -- throwing here does the same.
+    let body = null, last = '';
+    for (let attempt = 1; attempt <= API_MAX_RETRIES; attempt++) {
+      let r;
+      try {
+        r = await originalFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skus: [{ [sku]: variantId }] }),
+        });
+      } catch (e) {
+        throw new Error(`network error: ${e && e.message || e}`);
+      }
+      const parsed = await r.json().catch(() => null);
+      if (r.status === 200 && parsed && typeof parsed.data === 'object' && parsed.data !== null) {
+        body = parsed; break;
+      }
+      if (r.status === 429) {
+        // ratelimit.classify_429 treats a 429 without X-RateLimit-Remaining as
+        // genuine rate limiting. The API doesn't expose that header (or
+        // Retry-After) to pages, so this is always that branch: wait
+        // 15 s x attempt, as api_fetcher does when Retry-After is absent.
+        last = `429 rate limited (waited ${15 * attempt}s)`;
+        await new Promise(res => setTimeout(res, 15000 * attempt));
+        continue;
+      }
+      if (r.status >= 500 && r.status < 600) {
+        last = `HTTP ${r.status}`;
+        await new Promise(res => setTimeout(res, 2000 * attempt));
+        continue;
+      }
+      throw new Error(`HTTP ${r.status}`);
+    }
+    if (!body) throw new Error(`gave up after ${API_MAX_RETRIES} attempts: ${last}`);
+    const data = body.data;
     const items = data['scanned-items'] || {};
     const elite = data.elitePrices || {};
     const missingVariants = new Set((data.missingItems || []).map(String));
 
+    // api_fetcher._row: every row is stamped with the check's time, and THC/CBD
+    // come from the catalogue (published as product.thc / product.cbd).
     const row = { api_stock: null, price: null, tier_label: '-', tier_amt: null,
-                  available: false, stock_text: '', thc: null, cbd: null };
+                  available: false, carried: null, stock_text: '',
+                  thc: (product && product.thc) || '', cbd: (product && product.cbd) || '',
+                  scraped_at: new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00') };
     const blob = items[sku];
     if (blob === undefined || blob === null) {
-      row.available = false; row.stock_text = 'Not carried';
+      row.available = false; row.carried = 0; row.stock_text = 'Not carried';
       return row;
     }
     const parsed = parseScan(blob);
@@ -236,6 +273,7 @@
     const carried = !!(parsed.api_price && parsed.api_price > 0);
     let priceRow = { api_elite_price: ep, member_price: null,
                       api_member_price: parsed.api_member_price, is_elite: isElite };
+    row.carried = carried ? 1 : 0;
     if (carried) {
       const qty = parsed.api_stock || 0;
       row.api_stock = qty;
@@ -253,7 +291,7 @@
   const JOBS = new Map();
   let _jobSeq = 0;
 
-  async function runLiveJob(job, storeList, sku, variantId, province) {
+  async function runLiveJob(job, storeList, sku, variantId, province, product) {
     const started = Date.now();
     let idx = 0;
     const interval = 60000 / API_RATE_PER_MIN;
@@ -267,12 +305,27 @@
       if (wait) await new Promise(res => setTimeout(res, wait));
       lastStart = Date.now();
       try {
-        const row = await scanStore(st.store_id, sku, variantId);
-        (LIVE_OVERRIDES[province] ??= {})[sku] ??= {};
-        LIVE_OVERRIDES[province][sku][st.store_id] = row;
+        // A failed scan leaves the store's previous data in place, as the
+        // original's ignored error row did. Unlike the original, which ended
+        // such a job "Done." (api_fetcher.fetch swallowed the error), the
+        // failure is reported on the job so the page says "Some stores
+        // failed: ..." -- a change the user approved on 2026-09-28.
+        let row = null;
+        try { row = await scanStore(st.store_id, sku, variantId, product); }
+        catch (scanErr) {
+          row = null;
+          job.error = `${st.name}: ${scanErr && scanErr.message || scanErr}`;
+        }
+        if (row) {
+          (LIVE_OVERRIDES[province] ??= {})[sku] ??= {};
+          LIVE_OVERRIDES[province][sku][st.store_id] = row;
+        }
       } catch (e) {
         job.error = `${st.name}: ${e && e.message || e}`;
       }
+      // db.last_scan_attempt counts every scan row, success or error, as an
+      // attempt; each one restarts the skip-list clock for that store.
+      try { localStorage.setItem(`scanAttempt:${st.store_id}`, new Date().toISOString()); } catch (e2) {}
       job.done++;
       job.store = job.current = `${st.name}, ${st.city}`;
       if (job.done) job.eta_min = ((Date.now() - started) / job.done)
@@ -310,13 +363,31 @@
       top, province, allStores,
     });
 
+    // fetchers.partition_scannable: a store on the skip list is contacted only
+    // if its last scan attempt is more than SCAN_SKIP_RETRY_DAYS old, or it has
+    // never been tried. The original remembered attempts in the shared history
+    // DB; a static page can only remember them in this visitor's browser.
+    const skipIds = new Set(((await loadCatalog()).scan_skip_stores || []).map(String));
+    const keep = [], skipped = [];
+    for (const s of storeList) {
+      if (!skipIds.has(String(s.store_id))) { keep.push(s); continue; }
+      let stamp = null;
+      try { stamp = localStorage.getItem(`scanAttempt:${s.store_id}`); } catch (e) { stamp = null; }
+      const due = !stamp || (Date.now() - Date.parse(stamp)) >= SCAN_SKIP_RETRY_DAYS * 86400000;
+      (due ? keep : skipped).push(s);
+    }
+    if (!keep.length) {
+      return { __status: 409, error: 'every store in scope is on the scan skip list' };
+    }
+    storeList.length = 0; storeList.push(...keep);
+
     const id = `live-${++_jobSeq}`;
     const job = { id, total: storeList.length, done: 0, state: 'running',
                   current: null, store: null, eta_min: null, finished: false,
                   error: null };
     JOBS.set(id, job);
-    runLiveJob(job, storeList, sku, v.variant_id, province);
-    return { job: id, total: storeList.length, skipped: [] };
+    runLiveJob(job, storeList, sku, v.variant_id, province, v);
+    return { job: id, total: storeList.length, skipped: skipped.map(s => s.name) };
   }
 
   function apiJobGet(id) {
@@ -328,7 +399,7 @@
   // --- province facts: db.py:province_facts ---------------------------------
   const _factsCache = new Map();
 
-  function stockRow(arr) {
+  function stockRow(arr, times) {
     // ci/export_province.py's appended stock row: the original 7 fields plus
     // `available`/`stock_text`. A province file exported before that change
     // is 7 fields long and available-only, so a missing `available` means
@@ -338,6 +409,10 @@
       tier_label: arr[3], tier_amt: arr[4], thc: arr[5], cbd: arr[6],
       available: arr.length > 7 ? !!arr[7] : true,
       stock_text: arr.length > 8 ? arr[8] : null,
+      // The row's own scrape time and `carried`, exported from 2026-09-28;
+      // older files fall back to the store's time and null.
+      scraped_at: arr.length > 9 && times ? (times[arr[9]] || null) : null,
+      carried: arr.length > 10 ? arr[10] : null,
     };
   }
 
@@ -348,7 +423,7 @@
     try { data = await loadProvince(province); } catch (e) { return {}; }
     const facts = {};
     for (const [sku, rawRows] of Object.entries(data.stock || {})) {
-      const rows = rawRows.map(stockRow);
+      const rows = rawRows.map(a => stockRow(a, data.times));
       const available = rows.some(r => r.available);
       const category = (data.products[sku] && data.products[sku].category) || '';
       const thc = spanFromValues(rows.map(r => r.thc));
@@ -453,7 +528,8 @@
       out.push({
         store_id: s.store_id, api_stock: known ? 0 : null, price: null,
         tier_label: '-', tier_amt: null, thc: null, cbd: null,
-        available: false, stock_text: known ? 'Not in stock' : 'Not checked',
+        available: false, carried: known ? 0 : null, filled: true,
+        stock_text: known ? 'Not in stock' : 'Not checked',
       });
     }
     return out;
@@ -461,7 +537,7 @@
 
   // --- pack: server.py:_pack --------------------------------------------------
 
-  function pack(rows, storeList, sort) {
+  function pack(rows, storeList, sort, handle) {
     const byId = new Map(storeList.map(s => [s.store_id, s]));
     const out = rows.map(r => {
       const st = byId.get(r.store_id) || {};
@@ -476,10 +552,14 @@
         store: st.name, city: st.city, store_id: r.store_id,
         distance_km: st.distance_km !== undefined ? st.distance_km : null,
         qty: r.api_stock === undefined ? null : r.api_stock,
-        available: !!r.available, carried: null, stock_text: r.stock_text,
+        available: !!r.available, carried: r.carried === undefined ? null : r.carried,
+        stock_text: r.stock_text,
         market: market === undefined ? null : market,
         tier: r.tier_label, tier_price: deal === undefined ? null : deal, save,
-        is_elite: r.tier_label === 'ELITE', url: null,
+        is_elite: r.tier_label === 'ELITE',
+        // The observations view's url: config.BASE/products/<handle>?sID=<store>.
+        // Filled-in stores have no url: main.fill_missing_stores sets none.
+        url: r.filled ? null : `https://cannacabana.com/products/${handle || ''}?sID=${r.store_id}`,
       };
     });
     const far = 9e9;
@@ -635,7 +715,7 @@
 
     let provinceData;
     try { provinceData = await loadProvince(prov); } catch (e) { provinceData = { stock: {}, products: {} }; }
-    let rawAll = (provinceData.stock[sku] || []).map(stockRow);
+    let rawAll = (provinceData.stock[sku] || []).map(a => stockRow(a, provinceData.times));
     // A live check just run in this browser (see apiRefreshPost) replaces
     // that store's row for this visitor only -- the original wrote it to the
     // shared history DB; a static page has nowhere shared to write it.
@@ -659,8 +739,9 @@
     let age = null;
     for (const r of raw) {
       const st = storeByIdAll.get(r.store_id);
-      if (st && st.scraped_at) {
-        const h = (Date.now() - Date.parse(st.scraped_at)) / 3600000;
+      const t = r.scraped_at || (st && st.scraped_at);
+      if (t) {
+        const h = (Date.now() - Date.parse(t)) / 3600000;
         if (age === null || h < age) age = h;
       }
     }
@@ -679,7 +760,8 @@
 
     const indexedIds = new Set(storeList.filter(s => s.scraped_at).map(s => s.store_id));
     const filled = fillMissingStores(raw, storeList, sku, indexedIds);
-    const packed = pack(filled, storeList, sort);
+    const packed = pack(filled, storeList, sort,
+      (provinceData.products[sku] && provinceData.products[sku].handle) || v.handle);
 
     const category = (provinceData.products[sku] && provinceData.products[sku].category) || v.category || '';
     return {
@@ -696,6 +778,15 @@
     };
   }
 
+  // Also published on window before the page's own script runs, so code that
+  // draws before /api/capabilities answers (the index panel, the catalogue
+  // line) never mistakes "not loaded yet" for "allowed".
+  const STATIC_CAPS = {
+    admin: false, playwright: false, live: true, rebuild: false,
+    catalog_refresh: false, live_seconds_per_store: 2.2,
+  };
+  window.STATIC_CAPS = STATIC_CAPS;
+
   async function apiCapabilities() {
     // app.cannacabana.com's scan endpoint allows CORS (verified live; see
     // docs/plans/restore-original-page.md), so "Live: fast API" runs straight
@@ -703,10 +794,7 @@
     // run here (no Playwright on a static page), and admin-gated actions
     // (catalogue refresh, index rebuilds) stay off pending a decision on
     // whether to offer them at all -- see the plan's "Proposed improvements".
-    return {
-      admin: false, playwright: false, live: true, rebuild: false,
-      catalog_refresh: false, live_seconds_per_store: 2.2,
-    };
+    return STATIC_CAPS;
   }
 
   async function apiCatalogStatus() {

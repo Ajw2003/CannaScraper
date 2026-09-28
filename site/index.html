@@ -628,7 +628,7 @@ function liveCost(stores){
 // Capabilities this installation has, fetched once and kept for every place
 // that needs them: caps() itself, idxRow()/renderIndex() (rebuild controls)
 // and the "Refresh catalogue" button.
-let CAPS = {};
+let CAPS = window.STATIC_CAPS || {};
 
 (async function caps(){
   try{
