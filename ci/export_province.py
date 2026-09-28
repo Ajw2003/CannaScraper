@@ -2,10 +2,19 @@
 
 Built for the scheduled scrape (.github/workflows/scrape-one.yml): after
 a run finishes, this reads the history DB it wrote to and produces
-`data/<slug>.json` -- the file the static site (site/index.html) fetches at
-runtime. It never talks to the network itself; everything comes from the
-history DB and the committed stores.json (via stores.get_stores), same as the
-CLI and the web server.
+`data/<slug>.json` -- the file the static site (site/index.html, via
+site/static-api.js) fetches at runtime. It never talks to the network
+itself; everything comes from the history DB and the committed stores.json
+(via stores.get_stores), same as the CLI and the web server.
+
+Sold-out rows are kept (not just in-stock ones): the static site's port of
+db.province_facts (static-api.js) needs the newest row per (sku, store)
+INCLUDING sold-out rows to compute "in stock anywhere", category and
+THC/CBD spans the same way server.py does, and the product page needs them
+to tell "not in stock" apart from "not checked". Each stock row therefore
+carries `available` (0/1) and `stock_text` appended after the original 7
+fields, so an older export (from before this changed) still has its first 7
+fields at the same positions.
 
     python ci/export_province.py --province Saskatchewan --db PATH --out DIR \
         [--run-summary run.json]
@@ -79,10 +88,8 @@ def main(argv=None) -> int:
     finally:
         conn.close()
 
-    rows = [r for r in rows if r.get("available")]
-
     if not rows:
-        print(f"error: no in-stock rows for {args.province} in {args.db}", file=sys.stderr)
+        print(f"error: no rows for {args.province} in {args.db}", file=sys.stderr)
         return 1
 
     run_summary = None
@@ -113,6 +120,12 @@ def main(argv=None) -> int:
 
     products: dict[str, dict] = {}
     stock: dict[str, list] = {}
+    # Each row's own scrape time, stored once in `times` and referenced by
+    # index: a store's rows are not all written at the same instant, and the
+    # page's "this product last checked" (db.cache_age_hours) reads the row's
+    # time, not the store's. A shared table keeps the file small.
+    times: list[str] = []
+    time_index: dict[str, int] = {}
     for r in rows:
         sku = str(r["sku"])
         if sku not in products:
@@ -126,10 +139,18 @@ def main(argv=None) -> int:
             }
         tier_label, tier_amt = tier_price(r)
         price = r.get("api_price") or r.get("price")
+        # Appended, not inserted: the first 7 fields keep their old positions
+        # so a page that still expects the pre-sold-out-rows shape can treat
+        # a missing `available` as available=1 (see static-api.js).
         stock.setdefault(sku, []).append([
             r["store_id"], r.get("api_stock"), price,
             tier_label, tier_amt, r.get("thc"), r.get("cbd"),
+            1 if r.get("available") else 0, r.get("stock_text"),
+            time_index.setdefault(r.get("scraped_at") or "", len(time_index)),
+            r.get("carried"),
         ])
+        if len(times) < len(time_index):
+            times.append(r.get("scraped_at") or "")
 
     out = {
         "province": args.province,
@@ -138,6 +159,7 @@ def main(argv=None) -> int:
         "stores": stores_out,
         "products": products,
         "stock": stock,
+        "times": times,
     }
 
     out_dir = Path(args.out)

@@ -1,0 +1,308 @@
+<title>What the Pages Site Dropped</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --paper:#f6f8f6; --card:#ffffff; --ink:#1a1f1c; --mut:#5d6660; --line:#dce2dd;
+  --accent:#1a7f4b;
+  --lost:#b42318; --lostbg:#fdeceb;
+  --changed:#9a5b06; --changedbg:#fdf1de;
+  --new:#1a7f4b; --newbg:#e5f4ec;
+  --server:#4b5563; --serverbg:#eef0f2;
+  --old:#3a67b0; --pages:#1a7f4b;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"Public Sans", "Segoe UI", system-ui, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --paper:#141816; --card:#1b201d; --ink:#eef1ee; --mut:#a3ada6; --line:#2e3531;
+    --accent:#5cc98d;
+    --lost:#ff8a80; --lostbg:#3a1714;
+    --changed:#e8a94a; --changedbg:#35270f;
+    --new:#5cc98d; --newbg:#15301f;
+    --server:#b4bcc6; --serverbg:#262b30;
+    --old:#5f8ad4; --pages:#2f9a60;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#141816; --card:#1b201d; --ink:#eef1ee; --mut:#a3ada6; --line:#2e3531;
+  --accent:#5cc98d;
+  --lost:#ff8a80; --lostbg:#3a1714;
+  --changed:#e8a94a; --changedbg:#35270f;
+  --new:#5cc98d; --newbg:#15301f;
+  --server:#b4bcc6; --serverbg:#262b30;
+  --old:#5f8ad4; --pages:#2f9a60;
+}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:15.5px/1.6 var(--body);
+  padding-inline:16px;padding-block:28px 64px}
+.wrap{max-width:1040px;margin:0 auto;display:grid;gap:44px}
+/* Grid items default to min-width:auto, so a wide table would stretch its
+   cell past the screen even inside its own scroll box. */
+.wrap>*,.pair,.pair .shots>*,.findings>*{min-width:0}
+h1,h2,h3{font-family:var(--display);line-height:1.15;text-wrap:balance;margin:0}
+h1{font-size:clamp(28px,4.6vw,42px);letter-spacing:-.01em}
+h2{font-size:24px;margin-bottom:6px}
+h3{font-size:17px}
+p{margin:0;max-width:68ch}
+.lede{color:var(--mut);font-size:16.5px}
+.eyebrow{font:600 12px/1 var(--body);letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
+header{display:grid;gap:12px}
+code,.num{font-family:var(--mono);font-size:.9em}
+a{color:var(--accent)}
+.meta{color:var(--mut);font-size:13px}
+
+/* tally */
+.tally{display:flex;flex-wrap:wrap;gap:10px}
+.tally div{display:flex;gap:10px;align-items:baseline;padding:10px 14px;border-radius:10px;
+  border:1px solid var(--line);background:var(--card)}
+.tally b{font:700 26px/1 var(--display);font-variant-numeric:tabular-nums}
+.tally span{color:var(--mut);font-size:13.5px}
+.tally .l b{color:var(--lost)} .tally .c b{color:var(--changed)}
+.tally .s b{color:var(--server)} .tally .n b{color:var(--new)}
+
+/* pills */
+.pill{display:inline-block;font:700 11px/1 var(--body);letter-spacing:.06em;text-transform:uppercase;
+  padding:5px 8px;border-radius:999px;white-space:nowrap}
+.pill.lost{color:var(--lost);background:var(--lostbg)}
+.pill.changed{color:var(--changed);background:var(--changedbg)}
+.pill.server{color:var(--server);background:var(--serverbg)}
+.pill.new{color:var(--new);background:var(--newbg)}
+.pill.bug{color:var(--lost);background:transparent;border:1px solid currentColor}
+
+/* top findings */
+.findings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){ .findings{grid-template-columns:1fr} }
+.finding{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;
+  display:grid;gap:8px;align-content:start}
+.finding p{font-size:14.5px;color:var(--mut)}
+.finding p b{color:var(--ink);font-weight:600}
+
+/* search chart (table with bars) */
+.chartcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--mut);margin:4px 0 14px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+.scroll{overflow-x:auto}
+table.bars{width:100%;border-collapse:collapse;min-width:520px}
+table.bars th{text-align:left;font:600 12px/1.2 var(--body);letter-spacing:.05em;text-transform:uppercase;
+  color:var(--mut);padding:0 8px 8px;border-bottom:1px solid var(--line)}
+table.bars td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.bars tr:last-child td{border-bottom:0}
+table.bars td.term{font-family:var(--mono);font-size:13.5px;white-space:nowrap;width:120px}
+table.bars td.n{font-family:var(--mono);font-size:13.5px;text-align:right;width:62px;font-variant-numeric:tabular-nums}
+.track{display:grid;gap:2px}
+.bar{height:9px;border-radius:0 4px 4px 0;min-width:2px}
+.bar.old{background:var(--old)} .bar.pages{background:var(--pages)}
+.bar:hover{outline:2px solid var(--ink);outline-offset:1px}
+td.lossy{font-family:var(--mono);font-size:13px;color:var(--lost);font-weight:600;width:70px;text-align:right}
+td.lossy.ok{color:var(--mut);font-weight:400}
+
+/* screenshots */
+.pairs{display:grid;gap:28px}
+.pair{display:grid;gap:10px}
+.pair .shots{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:720px){ .pair .shots{grid-template-columns:1fr} }
+figure{margin:0;display:grid;gap:6px}
+figure img{width:100%;height:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
+figcaption{font-size:13px;color:var(--mut)}
+figcaption b{color:var(--ink)}
+.note{font-size:13.5px;color:var(--mut);max-width:80ch}
+
+/* full feature table */
+table.feat{width:100%;border-collapse:collapse;min-width:760px;font-size:14px}
+table.feat th{text-align:left;font:600 12px/1.2 var(--body);letter-spacing:.05em;text-transform:uppercase;
+  color:var(--mut);padding:10px;border-bottom:2px solid var(--line);position:sticky;top:0;background:var(--paper)}
+table.feat td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+table.feat td:first-child{font-weight:600;width:19%}
+table.feat td.st{width:1%}
+table.feat tr.group td{padding-top:22px;border-bottom:0;font:700 13px/1 var(--display);letter-spacing:.02em;color:var(--mut)}
+.back{font-size:13px;color:var(--mut)}
+.back b{color:var(--ink);font-weight:600}
+
+.method{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:grid;gap:8px}
+.method li{margin:2px 0;color:var(--mut);font-size:14px}
+.method ul{margin:0;padding-left:18px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">CannaScraper · 28 Sep 2026</span>
+  <h1>What the Pages site dropped</h1>
+  <p class="lede">The move from the desktop app (<code>web/index.html</code> served by <code>server.py</code>) to the static GitHub Pages site (<code>site/index.html</code>) kept the core lookup but lost a lot around it. Both were run side by side on the same real Saskatchewan data from the 02:42 UTC scrape, and compared feature by feature against the code.</p>
+  <div class="tally" aria-label="Summary counts">
+    <div class="l"><b>10</b><span>lost, could come back on a static site</span></div>
+    <div class="c"><b>2</b><span>changed</span></div>
+    <div class="s"><b>5</b><span>lost because they need a server</span></div>
+    <div class="n"><b>7</b><span>new on Pages</span></div>
+    <div class="l"><b>2</b><span>bugs found</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>The four that matter most</h2>
+  <p class="lede" style="margin-bottom:16px">These change what a shopper can find or what they're told, not just what the page offers.</p>
+  <div class="findings">
+    <div class="finding">
+      <span class="pill lost">Lost</span>
+      <h3>Search misses most category and size words</h3>
+      <p>The old search matched title, brand, <b>category and size</b>, ranked best match first. The new one matches <b>title and brand only</b>, in no particular order. <b>"pre-roll" finds 232 in-stock products in the old app, 7 on Pages.</b> "edibles" and "3.5 g" find none.</p>
+    </div>
+    <div class="finding">
+      <span class="pill changed">Changed</span>
+      <h3>Member price is played down</h3>
+      <p>The old app led with the price a member pays, struck through the full price and said <b>"save $7.91 (23%)"</b>. Pages leads with the full <b>$34.99</b> and puts the member price in small grey text. It also lost the <b>"Elite only"</b> badge.</p>
+    </div>
+    <div class="finding">
+      <span class="pill lost">Lost</span>
+      <h3>Can't tell "not stocked" from "no match"</h3>
+      <p>The old app could show products nobody in the province carries, marked <b>"none in province"</b>, and said how many it hid (<b>27</b> for "blue dream"). Pages only knows about in-stock products, so an unstocked product just gives <b>"Nothing matched that."</b></p>
+    </div>
+    <div class="finding">
+      <span class="pill lost">Lost</span>
+      <h3>No postal code, no "nearest 10"</h3>
+      <p>The old app took a <b>city or postal code</b> and could limit to the <b>5, 10 or 25 nearest</b> stores or sort by <b>most stock</b>. Pages only has the browser's location button, always lists the whole province, and has no sort choice.</p>
+    </div>
+  </div>
+</section>
+
+<section class="chartcard" aria-labelledby="search-h">
+  <h2 id="search-h">Search results, same data, same words</h2>
+  <p class="note">In-stock products in Saskatchewan that each search finds. Old app: the <code>/api/search</code> total with "only in stock" ticked. Pages: the site's own matching rule applied to the published <code>saskatchewan.json</code>.</p>
+  <div class="legend" aria-hidden="true"><span><i style="background:var(--old)"></i>Old app</span><span><i style="background:var(--pages)"></i>Pages site</span></div>
+  <div class="scroll">
+    <table class="bars" id="bars">
+      <thead><tr><th scope="col">Search</th><th scope="col">Old app</th><th scope="col">Pages</th><th scope="col"><span class="sr">Results</span></th><th scope="col">Lost</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="note" style="margin-top:12px">Most losses are category words (the site files pre-rolls under "Pre-Rolls" but titles say "PR") and sizes. "sativa" finds one more on Pages because Pages also covers a product the old app's catalogue file didn't list.</p>
+</section>
+
+<section class="pairs" aria-labelledby="shots-h">
+  <div>
+    <h2 id="shots-h">Side by side</h2>
+    <p class="note">900px-wide screenshots of both pages, with Saskatchewan selected. Product thumbnails show as broken images in every shot because the machine that took them can't reach Shopify's image server; they load normally for visitors. The old app's panel shows other provinces as "never indexed" only because that test copy held Saskatchewan's data alone.</p>
+  </div>
+
+  <div class="pair">
+    <h3>Opening the page</h3>
+    <div class="shots">
+      <figure><img src="old-landing.png" alt="Old app: catalogue index panel listing five provinces with Refresh buttons, search box, catalogue status with Refresh catalogue button, and five dropdowns for province, category, nearest-N, sort order and data source, a city or postal code box and an in-stock-only checkbox." loading="lazy">
+        <figcaption><b>Old app.</b> Admin panel for rebuilding each province, catalogue status, five filters, a place box, and an "only in stock" switch.</figcaption></figure>
+      <figure><img src="new-landing.png" alt="Pages site: province dropdown, Use my location button, Updated 1.7 hours ago, search box, category dropdown, then a list of product cards each showing store count and lowest price." loading="lazy">
+        <figcaption><b>Pages site.</b> Province, location button, when the data was updated, then search and category. Lists products straight away, with store count and lowest price.</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="pair">
+    <h3>Searching "blue dream"</h3>
+    <div class="shots">
+      <figure><img src="old-search.png" alt="Old app search results with the in-stock filter unticked: several Blue Dream products labelled NONE IN PROVINCE alongside in-stock ones with THC and CBD tags." loading="lazy">
+        <figcaption><b>Old app</b>, "only in stock" unticked: products nobody in Saskatchewan carries are listed and marked <b>none in province</b>. Ticked, it shows 19 and says "27 hidden".</figcaption></figure>
+      <figure><img src="new-search.png" alt="Pages site search results for blue dream: in-stock products only, each with store count and lowest price." loading="lazy">
+        <figcaption><b>Pages site.</b> The same 19 in-stock products; the other 27 don't exist as far as the page knows. Cards add store count and lowest price.</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="pair">
+    <h3>Opening Blue Dream · 1964 · 3.5 g</h3>
+    <div class="shots">
+      <figure><img src="old-detail.png" alt="Old app product view: 13 of 13 stores have it, indexed all 13 stores 35 minutes ago, this product last checked 36 minutes ago, Reload from index button, store rows showing member price large, full price struck through and save amount with percentage." loading="lazy">
+        <figcaption><b>Old app.</b> "13 of 13 stores have it", when it was last checked, a reload / live-check button, and the member price first with the saving spelled out. CBD <b>0.46%</b>.</figcaption></figure>
+      <figure><img src="new-detail.png" alt="Pages site product view: Back to search button, 13 stores in stock, store rows showing full price large and member price in small text, each with a view link." loading="lazy">
+        <figcaption><b>Pages site.</b> "13 stores in stock", full price first, member price small, a <b>view</b> link to each store's product page. CBD shows <b>0.5%</b> (a rounding bug).</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="all-h">
+  <h2 id="all-h">Every difference</h2>
+  <p class="note" style="margin-bottom:14px">"Could come back" says what it would take on a static site. Line references point at the code each claim was checked against.</p>
+  <div class="scroll">
+  <table class="feat">
+    <thead><tr><th scope="col">Feature</th><th scope="col">Old app</th><th scope="col">Pages site</th><th scope="col">Status</th><th scope="col">Could come back?</th></tr></thead>
+    <tbody>
+      <tr class="group"><td colspan="5">Finding a product</td></tr>
+      <tr><td>What search matches</td><td>Title, brand, category and size, every word required (<code>catalog.py:183</code>)</td><td>Title and brand only (<code>matchProduct</code> in <code>site/index.html</code>)</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes, easily.</b> Category and size are already in the published JSON.</td></tr>
+      <tr><td>Result order</td><td>Ranked: exact title, then title starts with it, then phrase in title, then brand/category matches; shorter titles first</td><td>Whatever order the data file happens to be in</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes, easily.</b> Port the ranking to the page.</td></tr>
+      <tr><td>Products not stocked in the province</td><td>"Only products in stock somewhere" switch; unstocked ones labelled "none in province"; says how many were hidden</td><td>Only in-stock products are published, so they can't be shown or counted</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes.</b> Publish the product catalogue (about 6,800 products) alongside the stock files.</td></tr>
+      <tr><td>Category list</td><td>Categories with product counts, biggest first, e.g. "Flower (412)"</td><td>Category names only, alphabetical</td><td class="st"><span class="pill changed">Changed</span></td><td class="back"><b>Yes, easily.</b></td></tr>
+      <tr><td>Province list</td><td>Shows store count, e.g. "Ontario (100)"</td><td>Name only</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes, easily.</b> The count is already in <code>data/index.json</code>.</td></tr>
+
+      <tr class="group"><td colspan="5">Where it is and what it costs</td></tr>
+      <tr><td>Price shown first</td><td>Member or ELITE price large, full price struck through, "save $X (Y%)"</td><td>Full price large, member price small, no saving shown</td><td class="st"><span class="pill changed">Changed</span></td><td class="back"><b>Yes, easily.</b> Both prices are in the data.</td></tr>
+      <tr><td>"Elite only" badge</td><td>Shown on ELITE-tier products</td><td>Missing, though the data already marks ELITE prices (2,547 Saskatchewan store rows)</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes, easily.</b> Only the page needs changing.</td></tr>
+      <tr><td>Location by city or postal code</td><td>Type a place; the server looks it up on OpenStreetMap</td><td>Browser location button only</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Probably.</b> The page could look up OpenStreetMap itself, or match a postal-code prefix from a small bundled table.</td></tr>
+      <tr><td>How many stores</td><td>5, 10 or 25 nearest, or whole province</td><td>Always the whole province</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes, easily.</b></td></tr>
+      <tr><td>Store order</td><td>Choice: closest first, or most stock first</td><td>Fixed: closest when located, otherwise most stock</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes, easily.</b></td></tr>
+      <tr><td>Stores that don't have it</td><td>"13 of 13 stores have it" plus "Show N without it" listing the rest, greyed</td><td>Only stores that have it are listed</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes.</b> The page already knows every store in the province.</td></tr>
+      <tr><td>How fresh this product's answer is</td><td>Per product: "indexed all 13 stores · 35 min ago · this product last checked 36 min ago", or "partly indexed"</td><td>One line for the whole province: "Updated 1.7 h ago"</td><td class="st"><span class="pill lost">Lost</span></td><td class="back"><b>Yes.</b> Per-store scrape times are already published.</td></tr>
+
+      <tr class="group"><td colspan="5">Needs a server (can't run on GitHub Pages)</td></tr>
+      <tr><td>Live check</td><td>"Check live now" re-asks every store right now, with a progress bar and time estimate (fast API or real-browser mode)</td><td>None; data is as fresh as the last hourly run</td><td class="st"><span class="pill server">Server only</span></td><td class="back"><b>Not directly.</b> Closest: a button that starts a one-province run in GitHub Actions, which needs a GitHub login.</td></tr>
+      <tr><td>Rebuild a province</td><td>Catalogue index panel: Refresh, Resume, Cancel per province, progress, time estimate, request-budget stats</td><td>Done in the Actions tab instead (Scrape all provinces / Scrape one province)</td><td class="st"><span class="pill server">Server only</span></td><td class="back"><b>Moved</b> to GitHub, not gone.</td></tr>
+      <tr><td>Catalogue status and refresh</td><td>"6759 products · catalogue updated 0 min ago" and a Refresh button</td><td>None</td><td class="st"><span class="pill server">Server only</span></td><td class="back"><b>Partly.</b> Could be a scheduled job too.</td></tr>
+      <tr><td>Admin password</td><td>Unlocks the admin-only actions above</td><td>Not needed: nothing on the page can trigger a scrape</td><td class="st"><span class="pill server">Server only</span></td><td class="back">Not needed.</td></tr>
+      <tr><td>Out-of-date build warning</td><td>Banner with "Rebuild and restart" when the .exe was older than its source</td><td>Not applicable: the site is always built from <code>main</code></td><td class="st"><span class="pill server">Server only</span></td><td class="back">Not needed.</td></tr>
+
+      <tr class="group"><td colspan="5">New on Pages</td></tr>
+      <tr><td>Always online</td><td>Only while the desktop app and its tunnel were running</td><td>Public URL, no PC needed, refreshed hourly by GitHub Actions</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+      <tr><td>Data age up front</td><td>Only inside a product view</td><td>"Updated 1.7 h ago" under the province, full time on hover</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+      <tr><td>Failed-store notice</td><td>None on the search page</td><td>Says when stores failed on the last run and that older data is shown</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+      <tr><td>Browse without typing</td><td>Needed at least 2 letters</td><td>Lists products straight away; category alone works as a filter</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+      <tr><td>Store count and lowest price on cards</td><td>Not shown until you open a product</td><td>"7 stores · from $6.99" on every card</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+      <tr><td>Link to the product at each store</td><td>Not in the list</td><td>"view" opens the product on cannacabana.com for that store</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+      <tr><td>Remembers your province</td><td>Always opened on the configured default</td><td>Remembered in the browser</td><td class="st"><span class="pill new">New</span></td><td class="back">—</td></tr>
+
+      <tr class="group"><td colspan="5">Bugs found while comparing</td></tr>
+      <tr><td>Small potency values rounded</td><td>CBD 0.46%</td><td>CBD 0.5%: the page's port of <code>potency()</code> rounds to one decimal where Python kept two</td><td class="st"><span class="pill bug">Bug</span></td><td class="back"><b>Easy fix.</b></td></tr>
+      <tr><td>Failed stores never named</td><td>—</td><td>The notice tries to list failed stores (<code>run.failed_stores</code>), but the export never writes that field, so it can only give a count</td><td class="st"><span class="pill bug">Bug</span></td><td class="back"><b>Easy fix</b> in the export step.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="method" aria-labelledby="m-h">
+  <h3 id="m-h">How this was checked</h3>
+  <ul>
+    <li>Old app: <code>server.py</code> run locally from <code>main</code> with the live <code>history-saskatchewan.db</code> (scraped 02:42–02:52 UTC).</li>
+    <li>Pages site: the published <code>gh-pages</code> branch served locally, same scrape.</li>
+    <li>Both driven in headless Chromium with the same steps; search counts taken from the old app's API and from the Pages site's matching rule on its own data file.</li>
+    <li>Every feature row was read from the code, not only seen on screen: <code>web/index.html</code>, <code>server.py</code>, <code>catalog.py</code>, <code>site/index.html</code>, <code>ci/export_province.py</code>.</li>
+    <li>Not checked: the old app's real-browser live check (needs Playwright and network access to the site), and the other provinces' data.</li>
+  </ul>
+</section>
+
+</div>
+
+<script>
+// Search counts measured 2026-09-28 on Saskatchewan (see the method box).
+const SEARCHES = [
+  ["pre-roll", 232, 7], ["vape", 400, 304], ["cartridge", 158, 158],
+  ["gummies", 80, 77], ["3.5 g", 70, 0], ["edibles", 57, 0],
+  ["blue dream", 19, 19], ["sativa", 15, 16], ["indica", 14, 14],
+];
+const max = Math.max(...SEARCHES.flatMap(([, a, b]) => [a, b]));
+const tbody = document.querySelector('#bars tbody');
+tbody.innerHTML = SEARCHES.map(([term, oldN, newN]) => {
+  const lost = oldN - newN;
+  const pct = oldN ? Math.round(100 * lost / oldN) : 0;
+  const w = n => (100 * n / max).toFixed(1) + '%';
+  return `<tr>
+    <td class="term">${term}</td>
+    <td class="n">${oldN}</td>
+    <td class="n">${newN}</td>
+    <td><div class="track">
+      <div class="bar old" style="width:${w(oldN)}" title="Old app: ${oldN} results for “${term}”"></div>
+      <div class="bar pages" style="width:${w(newN)}" title="Pages: ${newN} results for “${term}”"></div>
+    </div></td>
+    <td class="lossy${lost > 0 ? '' : ' ok'}">${lost > 0 ? '−' + pct + '%' : (lost < 0 ? '+' + (-lost) : 'same')}</td>
+  </tr>`;
+}).join('');
+</script>

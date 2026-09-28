@@ -45,9 +45,12 @@ for attempt in 1 2 3 4 5 6; do
     BASE="$(git -C "$WORK/fetch" rev-parse FETCH_HEAD)"
     if git -C "$WORK/fetch" ls-tree --name-only "$BASE" data/ | grep -q .; then
       git -C "$WORK/fetch" archive "$BASE" data | tar -x -C "$WORK/pub"
+      KEPT="$(git -C "$WORK/fetch" ls-tree --name-only "$BASE" data/ | tr '\n' ' ')"
+      echo "Kept from the current site: $KEPT"
     fi
   else
     BASE=""
+    echo "No gh-pages branch yet: first publish."
   fi
 
   cp -r "$SITE_DIR"/. "$WORK/pub/"

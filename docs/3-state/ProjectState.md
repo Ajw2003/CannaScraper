@@ -72,6 +72,27 @@ lease push against github.com only run once PR #6 merges. Also open: no schedule
 old workflow had appeared by 03:15 UTC (the 02:23 slot was missed), so whether GitHub fires the
 new hourly schedule still has to be confirmed.
 
+M7, feature audit (2026-09-28): the Pages site was compared with the old app on the same
+Saskatchewan data — `docs/generated/pages-audit/index.html` (published at
+https://claude.ai/artifact/KkdAM1nhkJxsu9oHP1LV9y). Headline gaps: search matches title and
+brand only ("pre-roll" 232 → 7 in-stock results), member price de-emphasised, unstocked
+products invisible, no postal-code location or nearest-N. Two bugs: CBD rounding (0.46% → 0.5%)
+and the failed-stores notice can never name stores (`failed_stores` is never exported).
+Nothing from the audit has been fixed yet.
+
+M7, restore of the original page (2026-09-28, issue #7, branch `claude/sharp-ptolemy-547028`,
+not merged). `site/index.html` is `web/index.html` plus the edits listed in
+`docs/plans/restore-original-page.md`; `site/static-api.js` answers its `/api/…` calls from
+published data. Verified locally on the live Saskatchewan history DB: `ci/parity_check.py`, 67
+requests against the old `server.py`, **no mismatches** (three consecutive runs);
+`ci/live_parity_check.py`, 4 live checks against a stub of the scan endpoint including a store
+that fails twice then answers and one that always fails, **no differences** beyond the approved
+change (the static page reports a failed store; the original said "Done."). One earlier live-check
+run showed a single difference whose output wasn't saved; it did not reproduce in the next four
+runs, and its cause is **unknown**. **Not yet run:** anything on GitHub (the new `catalog` job,
+the restored workflow steps, the page against real cannacabana.com), and the page with real
+network access to Nominatim or the scan API.
+
 ## The one thing that is not what it looks like
 
 **The egress pool reads as a completed throughput feature, but ships disabled by default and

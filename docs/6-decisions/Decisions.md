@@ -6,6 +6,26 @@ flipping its `Status` line to `Superseded`, pointing at the entry that replaced 
 
 ---
 
+## 2026-09-28 — Pages site dropped features without saying so
+
+**Context.** After the move to GitHub Pages the user noticed the site "feels like it's missing a
+few things". An audit (`docs/generated/pages-audit/index.html`) found 10 features lost that a
+static site could have kept, 2 changed for the worse and 2 new bugs, none of which had been
+disclosed. Only 3 server-only losses had been named. Worst case: search for "pre-roll" went from
+232 in-stock results to 7.
+
+**Decision.** Treat it as a process failure and record it as input for a house-rules guard:
+`docs/plans/house-rules-guard-silent-feature-loss.md`. A replacement, even as a new file, gets a
+feature inventory of the original from its code, shown to the user as keep / change / drop, and
+is verified against the original with the same inputs.
+
+**Why.** The spec for the new page was written from memory, verification only compared the new
+page with itself, and the existing rewrite rule (`edit-place.md`) only covers rewriting an
+existing file, not a new file that replaces one. Restoring the lost features is a separate,
+still-open piece of work.
+
+**Status.** Standing.
+
 ## 2026-09-28 — One workflow run per province, started by an orchestrator
 
 **Context.** All five provinces ran as one matrix in `scrape-province.yml`, so the published data

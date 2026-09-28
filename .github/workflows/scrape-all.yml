@@ -84,3 +84,60 @@ jobs:
     uses: ./.github/workflows/scrape-one.yml
     with:
       province: ${{ matrix.province }}
+
+  # The product catalogue (data/catalog.json) is shared by every province and
+  # does not need scraping to refresh, so it runs on its own schedule
+  # alongside the province jobs rather than being tied to any one of them --
+  # same as the running app topping up a stale catalogue on startup
+  # (server.py:_refresh_stale_catalog), just on a timer instead of a request.
+  catalog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # push gh-pages
+      pages: read          # find the live URL to check the published age
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Refresh only if the published catalogue is missing or old -- a fresh
+      # one costs nothing to skip, and skipping it every hour it is already
+      # current is what keeps this job cheap.
+      - name: Check the published catalogue's age
+        id: check
+        run: |
+          set -euo pipefail
+          AGE_H=""
+          if SITE=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null); then
+            AGE_H=$(curl -fsSL "${SITE%/}/data/catalog.json" 2>/dev/null | python -c "import json,sys,datetime as dt; d=json.load(sys.stdin); at=dt.datetime.fromisoformat(d['generated_at']); at=at if at.tzinfo else at.replace(tzinfo=dt.timezone.utc); print((dt.datetime.now(dt.timezone.utc)-at).total_seconds()/3600.0)" 2>/dev/null || true)
+          fi
+          if [ -z "$AGE_H" ]; then
+            echo "No published catalogue found (or it could not be read); refreshing."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          elif python -c "import sys; sys.exit(0 if float('$AGE_H') >= 24 else 1)"; then
+            echo "Published catalogue is ${AGE_H}h old; refreshing."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Published catalogue is ${AGE_H}h old; still fresh, nothing to do."
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refresh and export the catalogue
+        if: steps.check.outputs.stale == 'true'
+        run: |
+          set -euo pipefail
+          python ci/export_catalog.py --out "$RUNNER_TEMP/out" --refresh
+
+      - name: Publish to gh-pages
+        if: steps.check.outputs.stale == 'true'
+        env:
+          PUBLISH_MESSAGE: "Publish catalogue from ${{ github.sha }}"
+        run: |
+          set -euo pipefail
+          ci/publish_gh_pages.sh \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$RUNNER_TEMP/out"
