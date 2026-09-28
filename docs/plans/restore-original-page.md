@@ -136,6 +136,20 @@ the code and sits on top of the original page without changing what the original
 Parity after these: `ci/parity_check.py` 67 of 67 requests identical to the old server (the two
 added search fields, `stores` and `price_from`, are excluded by name).
 
+### Added at the user's request (2026-09-28)
+
+The user asked for the member price and Elite price (where there is one) on the search cards,
+and for searched items to be orderable by price. Marked "added on the Pages site" in the code.
+
+| Addition | Where | Test |
+|---|---|---|
+| Card line also shows " · member $Y" and " · Elite $Z" (lowest member / ELITE tier price among in-stock rows; each only when the product has one) | `static-api.js:provinceFacts` (`member_from`, `elite_from`), `apiSearch`; `index.html:card` | `ux_test`: member shown iff API `member_from`, Elite iff `elite_from` |
+| "Order of the products" select after the category: Best match / Price: low to high / high to low. Sorts the whole filtered list by `price_from` before paging; no price always last; ties keep the old order; remembered on the device | `static-api.js:apiSearch` (`sort` param); `index.html` `#psort`, `search`, provinces() | `ux_test`: cards non-decreasing / non-increasing, order kept after reload |
+
+Parity: `member_from` and `elite_from` are excluded by name like `stores` and `price_from`
+(`ci/parity_check.py:normalize`); without `sort` the answer is unchanged. Screenshots:
+`docs/generated/price-sort/`.
+
 ## Proposed changes — NOT built, awaiting the user
 
 Changes to, or removals from, the original. Each needs a yes or a scrap.

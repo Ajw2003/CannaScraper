@@ -148,3 +148,6 @@ run `--probe-egress` against their own configured routes first.
   tracks "get a named tunnel + token set up for a link that needs to keep working," which
   `PLAN_receiving_ledger.md` itself flags as a prerequisite before real stores depend on this
   (`PLAN_receiving_ledger.md:19-23`).
+
+- **Member/Elite prices and price ordering on the Pages site (2026-09-28)** — on branch
+  `claude/sharp-ptolemy-547028`, not merged; `ci/pages_ux_check.py` and `ci/run_parity.sh` pass locally.
