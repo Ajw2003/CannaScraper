@@ -139,12 +139,6 @@ pre-fetched build), else Playwright's own bundled Chromium.
 
 ## Traps
 
-- `top-level permissions: contents: read` plus a job env block that referenced `github.job` (an
-  earlier draft of this workflow) is invalid: `github.job` is a valid *expression* everywhere,
-  but naming an env var after a job-context field some contexts don't carry at parse time can
-  produce a workflow GitHub Actions silently refuses to run, or that only fails once triggered --
-  actionlint is what catches it before either happens. Keep the `workflows` job first and treat
-  any actionlint failure as blocking.
 - `ci/export_catalog.py` refreshes the catalogue over the network whenever
   `catalog.catalog_is_stale()` is true, and `config.CATALOG_CACHE` is stamped fresh only because
   `run_parity.sh` copies `catalog.json` right before calling it. Reordering those two steps (or
