@@ -79,6 +79,55 @@ ranked by match quality (`catalog.py:183-223`). The new one matches title and br
    replacement was a *new* file taking over an old file's job, so the rule never engaged, though
    the effect was the same: everything the old version did was discarded unless re-created.
 
+## Second observation: the workflow restructure (same day)
+
+The same gap showed up a second time, in a different kind of change, and a new gap was added on
+top of it.
+
+**Timeline (UTC, 2026-09-28).**
+
+| Time | What happened |
+|---|---|
+| 03:15 | `8c3e58e`: the scrape workflow is restructured from one `scrape-province.yml` into `scrape-one.yml` + `scrape-all.yml` + `ci/publish_gh_pages.sh`. No inventory of the old workflow. |
+| 03:17 | Merged as PR #6. |
+| ~03:25 | The user asks what the Pages site lost; the audit finds the first observation above. |
+| 03:39–03:42 | This document is written, then widened to cover restructures. The restructure is listed as an example with "whether it lost anything has **not** been checked". |
+| after 03:42 | The user replies "so check?". |
+| 03:48 | `1136df0`: checked, in three commands. Nothing user-visible lost; three small things dropped without mention (see *Scope*). |
+
+**The gaps, in order.**
+
+1. **Same gap, different kind of change.** The restructure had no parity inventory, just like the
+   page. It came out almost clean for a reason nobody designed: the five core scrape steps were
+   carried over by transforming the old file (`git mv`, then reusing the step text), so they moved
+   byte-for-byte. Everything that was lost sat in the parts that were **written again** (the
+   publish and verify logic), not the parts that were **moved**.
+2. **Knowing about the gap didn't close it.** By 03:42 the gap had been named, written up and
+   applied to this very restructure, and it still wasn't checked. Writing "not checked" read as
+   honest disclosure, but it pushed a three-command job onto the user, who had to ask for it.
+   Disclosing an unverified risk is right only when the check is expensive or needs the user.
+   When the check is cheap and within reach, disclosure without doing it is just a slower way of
+   not knowing.
+3. **"The losses were minor" is luck, not process.** The same process that lost 232→7 search
+   results here lost a page fetch in a verify step. Nothing in the process decided which it
+   would be.
+
+**What it adds to the guard.**
+
+- **The inventory is most needed where code is re-written, not moved.** A guard can weight its
+  attention: text carried over verbatim is low risk; logic re-expressed in a new place is not. Don't
+  rely on git's rename detection to tell them apart: `8c3e58e` shows `scrape-province.yml` as
+  deleted and `scrape-one.yml` as added, even though its five core steps were carried over
+  byte-for-byte, because too much of the file around them changed. Compare at the level of steps,
+  functions or blocks instead. Re-expressed logic (a new script replacing an inline step,
+  a reusable workflow replacing a matrix job, a JS port of a Python function) is where the losses
+  were, both times.
+- **"Not checked" needs a reason.** When a reply or document says a risk is unchecked or
+  unverified, the guard should ask whether the check is cheap and within reach, and if so, require
+  it to be done before the turn ends rather than handed over. This is a sibling of
+  `evidence-before-claims.md`: that rule stops claiming what wasn't tested; this one stops leaving
+  untested what could be tested in a minute.
+
 ## Shape of the failure (what a guard should recognise)
 
 - Existing behaviour is **re-created rather than edited**: by any of the kinds under *Scope*. The
@@ -137,6 +186,11 @@ other.
    inputs), outputs (published files, releases, artifacts) and side effects between the old and new
    files; for a migration: diff the columns and queries that read them.
 
+5. **Unchecked-but-cheap tripwire.** Flag replies and documents that say a risk is "not
+   checked", "unverified", "haven't confirmed" or similar, and ask in the same turn whether the check
+   can be run now. From the second observation: the phrase "whether it lost anything has **not**
+   been checked" was committed at 03:42; the check it deferred took three commands.
+
 ### How to test the guard
 
 It passes only if it engages for each kind under *Scope*, not just the one that happened. Primary
@@ -153,6 +207,9 @@ Secondary cases, each of which must also trigger the inventory step:
   province choice, push paths), its outputs (history release, `gh-pages`, the live-site check) and
   its concurrency behaviour, marked keep / change / drop.
 - **Rebuild in place:** "rewrite `site/index.html` cleanly". Same inventory as the primary case.
+- **Deferred check:** a reply that says "I haven't checked whether the restructure lost anything"
+  when the old and new files are both in the repo. The guard should prompt for the check in the
+  same turn instead of letting the reply end.
 - **Migration:** "move history from SQLite to per-run JSON". The inventory should list every
   reader of the old tables (`db.latest_observations`, `index_runs`, `scan_failure_streaks`, the
   exporter, the pruner).
