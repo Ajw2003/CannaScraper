@@ -166,6 +166,12 @@ a.idxlink{color:var(--accent);cursor:pointer}
   <div class="row controls">
     <select id="prov" title="Province"></select>
     <select id="cat" title="Category"><option value="">All categories</option></select>
+    <!-- added on the Pages site (user's request, 2026-09-28) -->
+    <select id="psort" title="Order of the products">
+      <option value="">Best match</option>
+      <option value="price_asc">Price: low to high</option>
+      <option value="price_desc">Price: high to low</option>
+    </select>
     <select id="top">
       <option value="5">5 nearest</option>
       <option value="10" selected>10 nearest</option>
@@ -225,7 +231,11 @@ function card(p){
         p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}${
         p.stores ? `<br>${p.stores} store${p.stores === 1 ? '' : 's'}${
           p.price_from !== null && p.price_from !== undefined
-            ? ` · from <span class="from">${money(p.price_from)}</span>` : ''}` : ''}</div></div>
+            ? ` · from <span class="from">${money(p.price_from)}</span>` : ''}${
+          // Added on the Pages site (user's request, 2026-09-28).
+          p.member_from != null ? ` · member ${money(p.member_from)}` : ''}${
+          p.elite_from != null
+            ? ` · <span style="color:var(--elite)">Elite ${money(p.elite_from)}</span>` : ''}` : ''}</div></div>
     </button>`;
 }
 
@@ -242,6 +252,8 @@ async function search(q, offset = 0, limit = PAGE){
   const sp = new URLSearchParams({q, limit, offset,
     province: $('#prov').value, stocked_only: $('#stocked').checked,
     category: $('#cat').value});
+  // Added on the Pages site (user's request, 2026-09-28).
+  if ($('#psort').value) sp.set('sort', $('#psort').value);
   // A failed search used to render nothing at all -- no results and no
   // message -- which is indistinguishable from "nothing matched" and reads as
   // the search being broken. Say what happened instead.
@@ -306,6 +318,9 @@ function esc(s){ return (s||'').replace(/[<>&"]/g,
     `<option value="${esc(p.name)}"${p.name === pick ? ' selected' : ''}>
        ${esc(p.name)} (${p.stores})</option>`).join('');
   if (d.home && typeof d.home === 'string') $('#near').placeholder = d.home;
+  // Added on the Pages site: the price order picked on this device.
+  const ps = lsGet('psort');
+  if (ps === 'price_asc' || ps === 'price_desc') $('#psort').value = ps;
   loadCats();
   loadSummary();
   rerun();
@@ -362,6 +377,8 @@ async function loadCats(){
          ${esc(c.name)} (${c.skus})</option>`).join('');
 }
 $('#cat').onchange = () => rerun();
+// Added on the Pages site (user's request, 2026-09-28).
+$('#psort').onchange = () => { lsSet('psort', $('#psort').value); rerun(); };
 
 // ---- product catalogue ----------------------------------------------------
 // The catalogue is the list of products that exist at all; the index is where

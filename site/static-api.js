@@ -431,11 +431,20 @@
       // Added on the Pages site (approved 2026-09-28): how many stores in
       // the province have it, and the lowest shelf price among them, for
       // the search cards. Not part of the original server's answer.
+      // The member and Elite prices were added at the user's request on
+      // 2026-09-28 (lowest tier price among in-stock rows).
       const inStock = rows.filter(r => r.available);
       const prices = inStock.map(r => r.price).filter(v => v !== null && v !== undefined);
+      const tierFrom = label => {
+        const t = inStock.filter(r => r.tier_label === label)
+          .map(r => r.tier_amt).filter(v => v !== null && v !== undefined);
+        return t.length ? Math.min(...t) : null;
+      };
       facts[sku] = { available, category, thc, cbd,
                      stores: inStock.length,
-                     price_from: prices.length ? Math.min(...prices) : null };
+                     price_from: prices.length ? Math.min(...prices) : null,
+                     member_from: tierFrom('member'),
+                     elite_from: tierFrom('ELITE') };
     }
     _factsCache.set(province, facts);
     return facts;
@@ -670,6 +679,22 @@
       hidden = before - filtered.length;
     }
 
+    // Added on the Pages site (user's request, 2026-09-28): order the whole
+    // filtered list by shelf price before paging. No price goes last either
+    // way; ties keep the earlier order (Array.sort is stable). No `sort`
+    // param leaves the original order untouched.
+    const sort = params.get('sort');
+    if (sort === 'price_asc' || sort === 'price_desc') {
+      const dir = sort === 'price_asc' ? 1 : -1;
+      const pf = v => { const f = facts[v.sku]; return f ? f.price_from : null; };
+      filtered = [...filtered].sort((a, b) => {
+        const x = pf(a), y = pf(b);
+        const nx = x === null || x === undefined, ny = y === null || y === undefined;
+        if (nx || ny) return nx === ny ? 0 : (nx ? 1 : -1);
+        return (x - y) * dir;
+      });
+    }
+
     const page = filtered.slice(offset, offset + limit);
     return {
       total: filtered.length, offset, hidden,
@@ -682,6 +707,8 @@
           in_stock: !!f.available,
           stores: f.stores || 0,
           price_from: f.price_from === undefined ? null : f.price_from,
+          member_from: f.member_from === undefined ? null : f.member_from,
+          elite_from: f.elite_from === undefined ? null : f.elite_from,
           thc: potencySpan(f.thc, f.category || ''),
           cbd: potencySpan(f.cbd, f.category || ''),
           image: thumb(v.image, 160),

@@ -98,6 +98,54 @@ with sync_playwright() as p:
     pg.reload(); pg.wait_for_timeout(2500)
     check(pg.eval_on_selector("#prov", "e => e.value") == "Saskatchewan", "province remembered after reload")
 
+    # price order, member / Elite prices (user's request, 2026-09-28).
+    # Expectations come from the page's own /api/search, not fixed data.
+    import re
+    def api(extra):
+        return pg.evaluate("""async (extra) => {
+            const r = await fetch('/api/search?' + new URLSearchParams(Object.assign(
+                {q: '', limit: 50, offset: 0, province: 'Saskatchewan',
+                 stocked_only: true, category: ''}, extra)));
+            return (await r.json()).products;
+        }""", extra)
+    def froms():
+        out = []
+        for t in pg.eval_on_selector_all("#plist .p", "els => els.map(e => e.innerText)"):
+            m = re.search(r"from \$([0-9.,]+)", t)
+            out.append(float(m.group(1).replace(",", "")) if m else None)
+        return out
+    def ordered(vals, sign):
+        pr = [v for v in vals if v is not None]
+        nones_last = vals[len(pr):] == [None] * (len(vals) - len(pr))
+        return nones_last and all(sign * (b - a) >= 0 for a, b in zip(pr, pr[1:]))
+    pg.select_option("#prov", "Saskatchewan"); pg.wait_for_timeout(1500)
+    pg.fill("#q", "gummies"); pg.wait_for_timeout(1200)
+    pg.select_option("#psort", "price_asc"); pg.wait_for_timeout(1500)
+    v = froms(); print("gummies price_asc:", v[:8])
+    check(len(v) > 1 and ordered(v, 1), f"price low to high is non-decreasing, unpriced last ({len(v)} cards)")
+    pg.select_option("#psort", "price_desc"); pg.wait_for_timeout(1500)
+    v = froms(); print("gummies price_desc:", v[:8])
+    check(len(v) > 1 and ordered(v, -1), f"price high to low is non-increasing, unpriced last ({len(v)} cards)")
+    pg.screenshot(path=f"{SHOTS}/ux-price-desc.png")
+
+    pg.fill("#q", "pre-roll"); pg.select_option("#psort", "price_asc"); pg.wait_for_timeout(1500)
+    prods = api({"q": "pre-roll", "sort": "price_asc"})
+    texts = pg.eval_on_selector_all("#plist .p", "els => els.map(e => e.innerText)")
+    check(len(texts) == len(prods), f"sorted 'pre-roll' shows the API's first page ({len(texts)} cards)")
+    if any(x["member_from"] is not None for x in prods):
+        check(all(("member $" in t) == (x["member_from"] is not None) for t, x in zip(texts, prods)),
+              "member price shown iff API member_from is set")
+        check(any("member $" in t for t in texts), "at least one card shows 'member $'")
+    else:
+        print("SKIP no product on the first page has member_from")
+    check(all(("Elite $" in t) == (x["elite_from"] is not None) for t, x in zip(texts, prods)),
+          f"Elite price shown iff API elite_from is set ({sum(x['elite_from'] is not None for x in prods)} of {len(prods)})")
+    pg.screenshot(path=f"{SHOTS}/ux-price-asc.png")
+    pg.fill("#q", "")
+    pg.reload(); pg.wait_for_timeout(2500)
+    check(pg.eval_on_selector("#psort", "e => e.value") == "price_asc", "price order remembered after reload")
+    pg.select_option("#psort", ""); pg.wait_for_timeout(800)
+
     # failed-store notice, with the Saskatchewan file edited in flight
     def failed(route):
         resp = route.fetch(); d = resp.json()
