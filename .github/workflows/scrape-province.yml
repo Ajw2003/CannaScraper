@@ -17,10 +17,12 @@ name: Scrape province
 
 on:
   schedule:
-    # Daily, 09:23 UTC = 3:23 am in Saskatchewan: stock after the overnight
-    # restock, before anyone checks. Off the hour because :00 is when GitHub's
-    # scheduler is busiest and runs are most often delayed.
-    - cron: '23 9 * * *'
+    # Hourly, at :23 -- off the hour because :00 is when GitHub's scheduler is
+    # busiest and runs are most often delayed. Alberta and Ontario take ~45-50
+    # minutes, so their runs are nearly back to back; if one overruns, the
+    # concurrency group below holds the next run until it finishes. Hourly is
+    # only affordable because the history is pruned each run (see "Prune").
+    - cron: '23 * * * *'
   workflow_dispatch:
     inputs:
       province:
@@ -41,6 +43,7 @@ on:
     paths:
       - .github/workflows/scrape-province.yml
       - ci/export_province.py
+      - ci/prune_history.py
       - site/**
 
 permissions:
@@ -181,6 +184,13 @@ jobs:
           set -euo pipefail
           python ci/export_province.py --province "$PROVINCE" --db "$DB" \
             --out "$RUNNER_TEMP/out" --run-summary run.json
+
+      # Keeps only the newest good row per product per store, so the file stays
+      # one snapshot in size instead of growing every hour toward the 2 GB
+      # release-file limit. The script refuses to save if pruning would change
+      # what the site or the next run reads.
+      - name: Prune history to the current state
+        run: python ci/prune_history.py --db "$DB"
 
       # Saved even when the export failed, as long as the scrape wrote a
       # database: those rows are real observations and the next run needs them.
