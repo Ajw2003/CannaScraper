@@ -1,0 +1,101 @@
+# Restore the original page on GitHub Pages
+
+Requested 2026-09-28: undo every change and removal the user didn't ask for, so the Pages site is
+as close to the original desktop page as a static host allows. UI/UX improvements are proposed to
+the user first and not built until approved. Background: `docs/generated/pages-audit/index.html`
+and `docs/plans/house-rules-guard-silent-feature-loss.md`.
+
+## Approach: the original page, with its server answered from files
+
+`site/index.html` becomes a copy of `web/index.html` with the smallest possible edits, plus one
+added script, `site/static-api.js`, that answers the page's `fetch('/api/…')` calls from published
+JSON using line-for-line ports of the server code that produced those answers. The page code stays
+the original's, so parity can be checked by diffing the two HTML files and by feeding identical
+requests to the old server and to `static-api.js` and comparing the JSON they return.
+
+## Parity inventory (from the code, not memory)
+
+Legend: **Same** = restored exactly. **Closest** = can't run without a server; nearest static
+equivalent, listed so nothing changes silently.
+
+### Search and browsing
+
+| Original feature | Source | Status |
+|---|---|---|
+| Search over the whole catalogue: title, brand, category, size; every word required; ranked exact → starts-with → phrase → all words in title → brand/category; shorter titles first | `catalog.py:183-223`, `server.py:280-351` | Same (port of `catalog.search`) |
+| Needs 2+ characters; 180 ms debounce; 50 per page, "Show N more", "Showing X of Y", "All N shown" | `web/index.html` search() | Same (page code unchanged) |
+| "Only products in stock somewhere in this province" switch; hidden count ("27 hidden"); "none in province" label; "No matches in stock … N matched but are out everywhere" | `server.py:api_search` | Same (needs the catalogue published; see Data) |
+| Category dropdown from the province's stocked products, with counts, biggest first; category filter compares the indexed category, falling back to the catalogue's | `server.py:api_categories`, `api_search` | Same |
+| Province dropdown with store counts, biggest first; default province `Alberta` | `server.py:api_provinces`, `config.PROVINCE` | Same |
+| THC/CBD on cards: consensus range across stores, split at 100 (`_span_aggs`, `pick_span`), formatted by `potency_span` (Python `:g`) | `db.py:538-632`, `server.py:122-178` | Same (fixes the 0.46% → 0.5% bug) |
+| Thumbnails at width 160 (cards) and 320 (product) | `server.py:thumb` | Same |
+| Catalogue line: "N products · catalogue updated X ago" | `server.py:api_catalog_status` | Same, from the published catalogue's timestamp |
+| "Refresh catalogue" button | `server.py:api_catalog_refresh` (admin) | **Closest:** hidden; the catalogue refreshes on a schedule instead (see Data) |
+
+### A product's stores
+
+| Original feature | Source | Status |
+|---|---|---|
+| "N of M stores have it · <scope>"; `indexed` / `partly indexed` / `not indexed yet` status with index age; "this product last checked X ago" / "not stocked at any of them" | `server.py:api_results`, `db.index_coverage`, `db.cache_age_hours` | Same |
+| Scope: 5 / 10 / 25 nearest or whole province; location from device, typed city/postal code, or `config.HOME` ("Calgary, AB") when neither | `server.py:_scope`, `stores.nearest`, `stores.resolve_location` | Same, geocoding via `geocode.json` then OpenStreetMap Nominatim from the browser (the service the server used) |
+| Sort: closest first / most stock first; out-of-stock rows last | `server.py:_pack` | Same |
+| Every store in scope listed: in stock (units pill, amber under 5), "not in stock" (indexed, no row), "not checked" (never indexed); "Show N without it" toggle | `main.fill_missing_stores`, `web/index.html` render() | Same |
+| Price: tier price (ELITE or member) bold, market struck through, "save $X (Y%)"; "Elite only" badge | `main.tier_price`, `server.py:_pack` | Same |
+| "Reload from index" button | `web/index.html` | Same |
+| Source dropdown "Live: fast API" / "Live: real browser" and "Check live now (N stores, ~T)" with progress bar | `server.py:api_refresh`, `/api/job` | **Closest:** both live options removed, as the original already did for "real browser" when Playwright was missing (`caps()`); only "Index (instant)" remains |
+
+### Catalogue index panel
+
+| Original feature | Source | Status |
+|---|---|---|
+| Panel summary "N of 5 provinces fully indexed"; per-province "stores · indexed x/y · age · about N min"; "last run stopped at x/y" | `server.py:api_index_status` | Same, from published run summaries |
+| Refresh / Resume / Start over / Cancel buttons, progress bars, queue state | `server.py:api_index_*`, `jobs.py` | **Closest:** buttons not shown (nothing on the page can start a scrape); rebuilds happen hourly via `scrape-all.yml` |
+| Request-budget line ("got within N of 60 …") | `ratelimit.history()` | **Closest:** shown only if the run summary carries it; otherwise empty, as the original renders when there's no history |
+| Admin password box | `auth.py` | **Closest:** never appears, because nothing asks for it |
+| Note text "…rebuilding needs the password." | `web/index.html` | **Closest:** reworded to say rebuilds run automatically every hour; nothing else in the note changes |
+| Stale-build banner + "Rebuild and restart" | `server.py:api_build_status` | Same behaviour as a non-packaged run: hidden (`frozen: false`) |
+
+## Data the page needs (all published to `gh-pages/data/`)
+
+- `index.json` — province manifest (exists), plus each province's store count and last-run summary.
+- `<slug>.json` — per province: stores (with coordinates and per-store scrape time) and the newest
+  row per (sku, store), **including sold-out rows** (needed for facts, "not in stock" vs "not
+  checked" and potency spans). Rows carry qty, market price, tier label/price, THC, CBD, available.
+  Today's export drops sold-out rows; the exporter changes to keep them.
+- `catalog.json` — slim catalogue (sku, title, brand, size, category, handle, image) with its
+  timestamp. Produced from `catalog.py`; refreshed by the scrape when older than
+  `CATALOG_MAX_AGE_H` (24 h), as the original app refreshed a stale catalogue on start.
+- `stores.json`, `geocode.json` — copies of the committed files, for store counts and the location
+  cache.
+
+`ci/build_manifest.py` must skip the non-province files.
+
+## Workflow items restored
+
+From the restructure check (`docs/plans/house-rules-guard-silent-feature-loss.md`): the per-province
+verify step fetches the page itself again; each run's JSON is uploaded as a 3-day Actions artifact
+again; the publish log says again which data it kept and when it makes the first publish.
+
+## Proposed improvements — NOT built, awaiting the user
+
+1. Show the data's age at the top of the page, before any product is opened.
+2. Notice when stores failed on the last run (and name them).
+3. Browse without typing: list products for a province or category with an empty search box.
+4. Store count and lowest price on each product card.
+5. A "view" link from each store row to that store's product page on cannacabana.com.
+6. Remember the chosen province and location between visits.
+7. Include products missing from the catalogue file but stocked in the province (e.g. Homestead
+   Bandwagon Sativa), which the original can't show.
+8. In the index panel, link each province to its "Scrape one province" run page on GitHub, so a
+   rebuild is one click for anyone signed in to GitHub with access.
+9. Replace the "Live" options with a note that data refreshes hourly.
+
+Items 1–6 existed on the static site built earlier and were removed by this restore.
+
+## Verification
+
+- Diff `web/index.html` against `site/index.html`: only the edits listed as **Closest** above.
+- Run the old server and `static-api.js` on the same data; send identical requests (search terms
+  from the audit, categories, provinces, results for several SKUs, scopes, sorts, locations) and
+  compare the JSON field by field.
+- Screenshot both pages through the same steps.
