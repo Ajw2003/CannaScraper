@@ -2,13 +2,11 @@ name: Publish site
 
 # Puts a change to the page (site/) live without scraping anything. It takes
 # the data already on gh-pages, lays the new site/ over it, and pushes. The
-# scrape itself only runs from scrape-province.yml, hourly or by hand.
+# scrape itself only runs from scrape-all.yml / scrape-one.yml, hourly or by hand.
 #
-# Its own concurrency group, deliberately not the scrape's: GitHub keeps one
-# pending run per group, so sharing it would let a page edit cancel a queued
-# hourly scrape. The cost is a rare race -- if a scrape publishes in the same
-# minute, one push overwrites the other. Nothing is lost: the data comes back
-# on the next hourly run, and every scrape publish copies site/ from main too.
+# Uses the same publish script as the scrape (ci/publish_gh_pages.sh), which
+# refuses to overwrite gh-pages if a province published in the meantime and
+# retries on top of it, so a page edit and a scrape can land together safely.
 
 on:
   push:
@@ -35,39 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assemble the site from current data plus the new page
+      - name: Publish the page over the existing data
+        env:
+          PUBLISH_MESSAGE: "Publish page from ${{ github.sha }}"
         run: |
           set -euo pipefail
-          PUB="$RUNNER_TEMP/pub"
-          mkdir -p "$PUB"
-          if ! git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
-            echo "::error::No gh-pages branch yet, so there is no data to publish the page with. Run the Scrape province workflow first."
-            exit 1
-          fi
-          git fetch --depth 1 origin gh-pages
-          if ! git ls-tree --name-only FETCH_HEAD data/ | grep -q .; then
-            echo "::error::gh-pages has no data/ folder. Run the Scrape province workflow first."
-            exit 1
-          fi
-          git archive FETCH_HEAD data | tar -x -C "$PUB"
-          cp -r site/. "$PUB/"
-          touch "$PUB/.nojekyll"
-          echo "Data kept: $(ls "$PUB/data" | tr '\n' ' ')"
-          echo "PUB=$PUB" >> "$GITHUB_ENV"
-
-      # Same single orphan commit as the scrape's publish, so gh-pages never
-      # accumulates history.
-      - name: Push gh-pages
-        run: |
-          set -euo pipefail
-          cd "$PUB"
-          git init -q -b gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "Publish page $(date -u +%Y-%m-%dT%H:%MZ) from ${GITHUB_SHA::7}"
-          git push --force -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
-          echo "Pushed gh-pages: $(git ls-files | wc -l) files."
+          ci/publish_gh_pages.sh "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
       - name: Verify the live page is the new one
         run: |

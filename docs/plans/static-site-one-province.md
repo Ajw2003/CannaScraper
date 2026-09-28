@@ -30,13 +30,20 @@ that scraped one province does not drop the others' files.
 2. `site/index.html` — static page: province picker (only provinces with data), search by
    title/brand, product list, per-store table (qty, price, tier price, distance when the browser
    shares location), data age. No server calls.
-3. `.github/workflows/scrape-province.yml` — `plan` job builds the province matrix (dispatch
-   input, or the default list); `scrape` job per province restores history, runs
-   `index_builder.py`, exports, uploads history; `publish` job assembles `gh-pages` and pushes.
-   Runs hourly and on manual dispatch. *(Until 2026-09-28 it also ran on every push touching the
-   pipeline or `site/`; that made each merge start a full ~50-minute scrape, so it was removed.
-   Page-only changes now go live through `.github/workflows/publish-site.yml`, which republishes
-   `site/` over the existing data without scraping.)*
+3. *(Reworked 2026-09-28; originally one `scrape-province.yml` running all provinces as one
+   matrix, triggered by pushes as well as the schedule.)* Now:
+   - `.github/workflows/scrape-one.yml` — one province end to end: restore history, scrape,
+     export, prune, save history, publish its JSON to `gh-pages`, verify the live site. Its own
+     concurrency group per province, so the same province never overlaps itself but a slow
+     Ontario never delays Saskatchewan. Runnable by hand for a single province.
+   - `.github/workflows/scrape-all.yml` — the orchestrator: hourly and by hand, calls
+     `scrape-one.yml` per province in parallel (default) or sequentially, for all provinces or a
+     chosen list.
+   - `ci/publish_gh_pages.sh` — the one way anything reaches `gh-pages`, shared with
+     `publish-site.yml`: builds a single orphan commit and pushes with a lease, retrying if
+     another province published first, so concurrent publishes never erase each other.
+   - `.github/workflows/publish-site.yml` — page-only changes go live without scraping.
+   No workflow scrapes on push.
 
 ## Out of scope for this step
 

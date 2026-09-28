@@ -1,6 +1,6 @@
 """Export one province's latest stock to a single static JSON file.
 
-Built for the scheduled scrape (.github/workflows/scrape-province.yml): after
+Built for the scheduled scrape (.github/workflows/scrape-one.yml): after
 a run finishes, this reads the history DB it wrote to and produces
 `data/<slug>.json` -- the file the static site (site/index.html) fetches at
 runtime. It never talks to the network itself; everything comes from the
