@@ -64,10 +64,10 @@ step 1 of its acceptance criteria.
 2. ~~The user makes the CannaScraper repo public.~~ Done.
 3. ~~One province end to end.~~ Built and run once ([36353925298](https://github.com/Ajw2003/CannaScraper/actions/runs/36353925298)): Saskatchewan scraped, exported,
    history saved, `gh-pages` pushed. See `docs/3-state/ProjectState.md` M7.
-4. **User:** switch on GitHub Pages (Settings → Pages → Deploy from a branch → `gh-pages`, root).
-   Then re-run to confirm the verify step sees the live site.
-5. Merge to the default branch so the daily schedule starts; watch the second run restore history.
-6. Add the other provinces to `PROVINCES_DEFAULT` one at a time.
+4. ~~Switch on GitHub Pages.~~ Done by the user; live site verified by the workflow.
+5. ~~Add the other provinces.~~ Done: all five, 225 stores (run 36363444274).
+6. ~~History growth.~~ Hourly schedule + prune to current state (decision 2026-09-28).
+7. **User:** merge PR #4 so the hourly schedule starts.
 4. Separately, and not urgently: `docs/3-state/ProjectState.md`'s cross-cutting issue about what
    "repo goes public" implies for `settings.json` secrets and the auth model is worth a real
    pass before M7 goes further than the IP test.

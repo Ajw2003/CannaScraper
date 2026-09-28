@@ -1,7 +1,7 @@
 # Project state
 
 **Headline: ~65% of the roadmap complete** (5 of 7 milestones essentially done; M6 not started,
-M7 in progress: Saskatchewan scrapes and publishes end to end; not yet served or scheduled).
+M7 in progress: all five provinces scrape, publish and are served; hourly schedule waits on merging PR #4).
 
 ## Status table
 
@@ -13,7 +13,7 @@ M7 in progress: Saskatchewan scrapes and publishes end to end; not yet served or
 | M4 — Normalized schema | Done | 100% |
 | M5 — Packaged, publicly-servable desktop app | Nearly done, actively stabilizing | ~95% |
 | M6 — Receiving ledger (perpetual inventory) | Not started, plan exists | 0% |
-| M7 — Static Pages + per-province Actions scrapers | Saskatchewan publishes; Pages off, schedule not on main | ~50% |
+| M7 — Static Pages + per-province Actions scrapers | All provinces live on Pages; schedule starts on merge | ~85% |
 
 ## Per-milestone detail
 
@@ -51,6 +51,18 @@ and member prices from that real data with no JS errors and no horizontal scroll
 run warned that GitHub Pages is switched off; the daily schedule only fires once the workflow
 is on the default branch; product thumbnails could not be checked (this sandbox cannot reach
 `cdn.shopify.com`); a second run restoring history has not happened yet.
+
+M7, all provinces (2026-09-28). Pages switched on by the user and confirmed in their browser at
+https://ajw2003.github.io/CannaScraper/ (product images load). Run
+[36363444274](https://github.com/Ajw2003/CannaScraper/actions/runs/36363444274) scraped all 225
+stores with no failures — Alberta 92 (40 min), Ontario 100 (50 min), Saskatchewan 13, Manitoba
+12, BC 8 — and its publish step confirmed the live site served the new data. History file sizes
+after one run: Ontario 42.3 MB, Alberta 33.7 MB. Hourly schedule plus per-run pruning added
+(`ci/prune_history.py`; decision 2026-09-28). Run
+[36364459762](https://github.com/Ajw2003/CannaScraper/actions/runs/36364459762) pruned in CI:
+Saskatchewan restored 11.9 MB and saved 6.06 MB after its third run. **Not yet true:** the
+hourly cron only fires after PR [#4](https://github.com/Ajw2003/CannaScraper/pull/4) merges to
+`main`; Alberta/Ontario had not yet been through a prune at the time of writing.
 
 ## The one thing that is not what it looks like
 
