@@ -81,7 +81,7 @@ hours_ago_iso() { date -u -d "-$1 hours" +%Y-%m-%dT%H:%M:%SZ; }
 #    successor watchdog dispatched at end with successor_of = run id.
 # =========================================================================
 d="$(new_scenario_dir)"
-echo "$(runs_array "$(run_of 900 in_progress "$(now_iso)")")" > "$d/runs_scrape-all.yml.json"
+runs_array "$(run_of 900 in_progress "$(now_iso)")" > "$d/runs_scrape-all.yml.json"
 GH_STUB_DIR="$d" GITHUB_RUN_ID=500 WATCH_MINUTES=0 POLL_SECONDS=0 "$HERE/scrape_watchdog.sh" > "$d/out.log" 2>&1 || true
 if [ "$(dispatch_count "$d" scrape-all.yml)" = "0" ] && grep -q "successor_of=500" "$d/calls.log" 2>/dev/null; then
   pass "a: chain alive -> no scrape-all dispatch, successor watchdog dispatched"
@@ -93,7 +93,7 @@ fi
 # b. watchdog, no active scrape-all, newest created 3h ago -> dispatched once
 # =========================================================================
 d="$(new_scenario_dir)"
-echo "$(runs_array "$(run_of 901 completed "$(hours_ago_iso 3)")")" > "$d/runs_scrape-all.yml.json"
+runs_array "$(run_of 901 completed "$(hours_ago_iso 3)")" > "$d/runs_scrape-all.yml.json"
 GH_STUB_DIR="$d" GITHUB_RUN_ID=501 WATCH_MINUTES=0 POLL_SECONDS=0 "$HERE/scrape_watchdog.sh" > "$d/out.log" 2>&1 || true
 if [ "$(dispatch_count "$d" scrape-all.yml)" = "1" ]; then
   pass "b: stale chain -> scrape-all dispatched once"
@@ -117,7 +117,7 @@ fi
 #    immediately, no dispatches.
 # =========================================================================
 d="$(new_scenario_dir)"
-echo "$(runs_array "$(run_of 400 in_progress "$(now_iso)")")" > "$d/runs_scrape-watchdog.yml.json"
+runs_array "$(run_of 400 in_progress "$(now_iso)")" > "$d/runs_scrape-watchdog.yml.json"
 rc=0
 GH_STUB_DIR="$d" GITHUB_RUN_ID=500 WATCH_MINUTES=0 POLL_SECONDS=0 SUCCESSOR_OF='' "$HERE/scrape_watchdog.sh" > "$d/out.log" 2>&1 || rc=$?
 total_calls=$(wc -l < "$d/calls.log" 2>/dev/null || echo 0)
@@ -132,7 +132,7 @@ fi
 #    does NOT exit early.
 # =========================================================================
 d="$(new_scenario_dir)"
-echo "$(runs_array "$(run_of 400 in_progress "$(now_iso)")")" > "$d/runs_scrape-watchdog.yml.json"
+runs_array "$(run_of 400 in_progress "$(now_iso)")" > "$d/runs_scrape-watchdog.yml.json"
 GH_STUB_DIR="$d" GITHUB_RUN_ID=500 WATCH_MINUTES=0 POLL_SECONDS=0 SUCCESSOR_OF='400' "$HERE/scrape_watchdog.sh" > "$d/out.log" 2>&1 || true
 if grep -q "successor_of=500" "$d/calls.log" 2>/dev/null; then
   pass "e: successor_of matches older run -> does not exit early"
@@ -145,7 +145,7 @@ fi
 #    watchdog dispatched if none active, not dispatched if one active.
 # =========================================================================
 d="$(new_scenario_dir)"
-echo "$(runs_array "$(run_of 700 queued "$(now_iso)")")" > "$d/runs_scrape-all.yml.json"
+runs_array "$(run_of 700 queued "$(now_iso)")" > "$d/runs_scrape-all.yml.json"
 GH_STUB_DIR="$d" GITHUB_RUN_ID=600 MIN_GAP_MINUTES=0 "$HERE/scrape_chain_next.sh" > "$d/out.log" 2>&1 || true
 if [ "$(dispatch_count "$d" scrape-all.yml)" = "0" ] && [ "$(dispatch_count "$d" scrape-watchdog.yml)" = "1" ]; then
   pass "f1: scrape-all already queued -> no scrape-all dispatch, watchdog dispatched (none active)"
@@ -154,8 +154,8 @@ else
 fi
 
 d="$(new_scenario_dir)"
-echo "$(runs_array "$(run_of 700 queued "$(now_iso)")")" > "$d/runs_scrape-all.yml.json"
-echo "$(runs_array "$(run_of 800 in_progress "$(now_iso)")")" > "$d/runs_scrape-watchdog.yml.json"
+runs_array "$(run_of 700 queued "$(now_iso)")" > "$d/runs_scrape-all.yml.json"
+runs_array "$(run_of 800 in_progress "$(now_iso)")" > "$d/runs_scrape-watchdog.yml.json"
 GH_STUB_DIR="$d" GITHUB_RUN_ID=600 MIN_GAP_MINUTES=0 "$HERE/scrape_chain_next.sh" > "$d/out.log" 2>&1 || true
 if [ "$(dispatch_count "$d" scrape-all.yml)" = "0" ] && [ "$(dispatch_count "$d" scrape-watchdog.yml)" = "0" ]; then
   pass "f2: scrape-all queued and watchdog active -> nothing dispatched"

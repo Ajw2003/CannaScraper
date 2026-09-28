@@ -6,6 +6,29 @@ flipping its `Status` line to `Superseded`, pointing at the entry that replaced 
 
 ---
 
+## 2026-09-28 — Pull requests run regression checks
+
+**Context.** Nothing in the repo caught a regression before it landed: the desktop page and the
+Pages copy could drift apart again after the 2026-09-28 restore
+(`docs/plans/restore-original-page.md`), the static site could silently diverge from the old
+server it replaced, and `ci/chain_lib.sh`'s dispatch logic (see the hourly-runs entry below) had
+no test run automatically. All of that was only checked by hand, if at all.
+
+**Decision.** A new workflow, `.github/workflows/checks.yml` ("Checks"), runs on every pull
+request and every push to `main`, as six separate jobs (workflows/actionlint, shell/shellcheck
+plus `ci/test_chain_scripts.sh`, syntax/compileall+selftest, pages-in-step, parity against the
+old server, and a data-independent walkthrough of the Pages additions). None of it scrapes or
+calls `cannacabana.com`/`app.cannacabana.com`: `parity` and `page-additions` work from a
+downloaded fixture history DB and the published `gh-pages` data, with the one live-scan endpoint
+stubbed. See `docs/4-systems/ci-checks.md`.
+
+**Why.** Each job traces to a specific incident (silent feature loss, an invalid runner context
+that slipped past review, chain scripts with no automated test, `web/`/`site/` drift) rather
+than being generic hygiene; running them on every PR catches the same class of regression before
+it merges instead of after a user notices.
+
+**Status.** Standing.
+
 ## 2026-09-28 — Hourly runs chain themselves; GitHub's schedule is only the backstop
 
 **Context.** `scrape-all.yml`'s hourly `schedule:` trigger was unreliable: it fired once

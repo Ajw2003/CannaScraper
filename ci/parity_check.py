@@ -29,13 +29,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
 
 from playwright.sync_api import sync_playwright
 
-CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+# CHROME_PATH overrides which Chromium binary Playwright launches. Unset, we
+# fall back to the sandbox's pre-fetched build if present, else Playwright's
+# own bundled Chromium (no executable_path -- `playwright install` handles it).
+_SANDBOX_CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+CHROME = os.environ.get("CHROME_PATH") or (
+    _SANDBOX_CHROME if os.path.exists(_SANDBOX_CHROME) else None
+)
 
 
 def old_get(base: str, path: str) -> tuple[int, dict]:
@@ -93,6 +100,14 @@ def diff(a, b, path="$"):
         for i, (x, y) in enumerate(zip(a, b)):
             yield from diff(x, y, f"{path}[{i}]")
     else:
+        # Age fields were rounded to 0.1 h by normalize(), but the two sides
+        # read the clock seconds apart, so an age right on a rounding
+        # boundary can land one step apart (15.1 vs 15.2). One step is the
+        # clock, not a difference; more than one is real.
+        key = path.rsplit(".", 1)[-1]
+        if (key in ROUND_H_KEYS and isinstance(a, (int, float))
+                and isinstance(b, (int, float)) and abs(a - b) <= 0.1 + 1e-9):
+            return
         if a != b:
             yield f"{path}: {a!r} (old) vs {b!r} (static)"
 
@@ -105,7 +120,9 @@ def main() -> int:
     args = ap.parse_args()
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROME, headless=not args.headed)
+        browser = pw.chromium.launch(
+            **({"executable_path": CHROME} if CHROME else {}), headless=not args.headed
+        )
         page = browser.new_page()
         page.goto(args.static + "/index.html")
         page.wait_for_timeout(300)   # let static-api.js install its fetch wrapper

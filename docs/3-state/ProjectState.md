@@ -89,7 +89,7 @@ requests against the old `server.py`, **no mismatches** (three consecutive runs)
 that fails twice then answers and one that always fails, **no differences** beyond the approved
 change (the static page reports a failed store; the original said "Done."). One earlier live-check
 run showed a single difference whose output wasn't saved; it did not reproduce in the next four
-runs, and its cause is **unknown**. **Not yet run:** anything on GitHub (the new `catalog` job,
+runs, and its cause was unknown at the time. **Explained 2026-09-28:** a `*_age_hours` field on a 0.1 h rounding boundary (15.1 vs 15.2), because the two sides read the clock seconds apart; `ci/parity_check.py` now allows one rounding step on those fields (seen once in 7 runs, 0 in 1 run after the fix). **Not yet run:** anything on GitHub (the new `catalog` job,
 the restored workflow steps, the page against real cannacabana.com), and the page with real
 network access to Nominatim or the scan API.
 
@@ -106,8 +106,20 @@ out of about twelve slots; the 5-minute probe from PR #10 fired 0 times in 26 mi
 documented GitHub behaviour (scheduled runs can be delayed or dropped under load). Replaced on
 the same branch, not merged: each scrape run dispatches the next one, a watchdog loop restarts
 the chain, and GitHub's schedule only restarts the watchdog (`docs/4-systems/hourly-trigger.md`).
-Tested locally: actionlint clean, `ci/test_chain_scripts.sh` 9/9 with a stub `gh`. **Not yet run
-on GitHub.** A manual full scrape was started 16:05 UTC.
+Verified on GitHub after PR #12 merged: the watchdog (run 36452690535) restarted the chain at
+17:20:18 UTC (run 36457403289, all 5 provinces published), and that run's `next` job dispatched
+run 36464483535 at 18:20:21, 60 min after it started. A manual full scrape was started 16:05 UTC.
+
+M7, CI checks (2026-09-28, branch `claude/ci-checks`, not merged). Added `.github/workflows/checks.yml`
+("Checks"), running on every pull request and push to `main` as six jobs: actionlint, shell
+(shellcheck + `ci/test_chain_scripts.sh`), syntax (compileall/node --check/selftest), `web/`-vs-`site/`
+in step, a parity run against a fixture Saskatchewan DB, and a data-independent walkthrough of the
+Pages additions (see `docs/4-systems/ci-checks.md`). Verified locally, each check twice: `parity`
+(`ci/run_parity.sh` against `history-saskatchewan.db`) **no mismatches** over 67 requests and **0 with
+differences** on 4 live checks, both runs; `page-additions` (`ci/run_pages_ux.sh` against real
+`gh-pages` data) **0 failures**, both runs; `ci/check_pages_in_step.sh` correct in both the failing
+and passing case; `selftest.py` 40/40; `ci/test_chain_scripts.sh` 9/9; actionlint and shellcheck
+clean. **On GitHub (PR #18, run 36472860741, 2026-09-28 19:31–19:35 UTC):** all six jobs green; parity downloaded the release DB, 67 requests no mismatches, 4 live checks 0 differences. The first run failed only on shellcheck SC2015 (the runner's shellcheck flags it, the local one did not), fixed in `086abd6`. The next run failed `selftest.py` step 33 on a slow runner (a wall-clock speedup ratio that also counted database time, 1.2x); it now checks overlapping fetches instead (fails with 1 worker, passes 5/5 with 3).
 
 ## The one thing that is not what it looks like
 

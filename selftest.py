@@ -625,11 +625,20 @@ def main() -> int:
         real_get, real_stores = IB._get, IB.S.get_stores
         seen_workers = set()
         lock = threading.Lock()
+        # Pages being fetched at the same moment, and the most seen at once.
+        # A serial run can never exceed 1, whatever the machine's speed.
+        in_flight = [0, 0]
 
         def watched_get(eg, *a, **kw):
             with lock:
                 seen_workers.add(eg.name)
-            return fake_get(eg, *a, **kw)
+                in_flight[0] += 1
+                in_flight[1] = max(in_flight[1], in_flight[0])
+            try:
+                return fake_get(eg, *a, **kw)
+            finally:
+                with lock:
+                    in_flight[0] -= 1
 
         try:
             IB._get = watched_get
@@ -656,11 +665,13 @@ def main() -> int:
         finally:
             conn.close()
 
-        # What one route would have taken: every page, back to back.
+        # What one route would have taken: every page, back to back. Shown
+        # for information only: elapsed also includes the per-store database
+        # work, which a slow CI disk inflates, so a wall-clock ratio failed a
+        # genuinely parallel run there (1.2x on 2026-09-28). Parallelism is
+        # judged by overlapping fetches instead.
         serial = n_stores * 2 * PAGE_MS
-        # Three routes should land near a third of that. 0.6 leaves room for
-        # thread scheduling without being loose enough to pass a serial run.
-        parallel = elapsed < serial * 0.6
+        parallel = in_flight[1] >= 2
 
         ok = (res["completed"] == n_stores and res["failed"] == 0
               and counts["done"] == n_stores and counts["pending"] == 0
@@ -668,6 +679,7 @@ def main() -> int:
               and len(seen_workers) == 3 and parallel)
         return ok, (f"{n_stores} stores, {rows} rows, "
                     f"{len(seen_workers)}/3 routes worked, "
+                    f"up to {in_flight[1]} pages at once, "
                     f"{elapsed:.2f}s vs {serial:.2f}s serial "
                     f"({serial / elapsed:.1f}x)")
 

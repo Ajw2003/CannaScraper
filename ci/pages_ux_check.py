@@ -9,9 +9,21 @@ no sideways scroll at phone width. Screenshots go to SHOTS.
     python3 ci/pages_ux_check.py ROOT SHOTS
 
 See docs/plans/restore-original-page.md, "Additions from the first static site".
+
+Data-independent: expectations come from the page's own /api/provinces and
+/api/search responses at run time, not hard-coded live-data facts. See
+docs/4-systems/ci-checks.md, "page-additions".
 """
-import functools, http.server, json, threading, sys
+import functools, http.server, json, os, threading, sys
 from playwright.sync_api import sync_playwright
+
+# CHROME_PATH overrides which Chromium binary Playwright launches. Unset, we
+# fall back to the sandbox's pre-fetched build if present, else Playwright's
+# own bundled Chromium (no executable_path -- `playwright install` handles it).
+_SANDBOX_CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+CHROME = os.environ.get("CHROME_PATH") or (
+    _SANDBOX_CHROME if os.path.exists(_SANDBOX_CHROME) else None
+)
 
 ROOT = sys.argv[1]
 H = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT)
@@ -27,7 +39,7 @@ def check(cond, msg):
     if not cond: fails.append(msg)
 
 with sync_playwright() as p:
-    b = p.chromium.launch(executable_path="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+    b = p.chromium.launch(**({"executable_path": CHROME} if CHROME else {}))
     ctx = b.new_context(viewport={"width": 1100, "height": 900})
     pg = ctx.new_page()
     errs = []
@@ -35,8 +47,12 @@ with sync_playwright() as p:
     pg.route("https://cdn.shopify.com/**", lambda r: r.abort())
     pg.goto(URL); pg.wait_for_timeout(2500)
 
+    provinces = pg.evaluate("async () => (await (await fetch('/api/provinces')).json())")
+    default_province = provinces["default"]
+    print("default province (from /api/provinces):", default_province)
+
     age = pg.inner_text("#age"); print("age line:", age)
-    check("Alberta stock updated" in age, "age line names the default province")
+    check(f"{default_province} stock updated" in age, "age line names the default province")
     n = len(pg.query_selector_all("#plist .p"))
     check(n == 50, f"empty box browses: {n} cards on load")
     first = pg.inner_text("#plist .p >> nth=0").replace("\n", " | "); print("first card:", first)
@@ -49,11 +65,20 @@ with sync_playwright() as p:
     check("Saskatchewan stock updated" in pg.inner_text("#age"), "age line follows province change")
     pg.fill("#q", "blue dream"); pg.wait_for_timeout(1200)
     cards = pg.query_selector_all("#plist .p"); print("blue dream cards:", len(cards))
-    check(len(cards) == 19, "search 'blue dream' in Saskatchewan still returns 19")
+    api_total = pg.evaluate("""async () => {
+        const r = await fetch('/api/search?' + new URLSearchParams(
+            {q: 'blue dream', limit: 50, offset: 0, province: 'Saskatchewan',
+             stocked_only: true, category: ''}));
+        return (await r.json()).total;
+    }""")
+    print("blue dream /api/search total:", api_total)
+    check(len(cards) == min(api_total, 50),
+          f"search 'blue dream' in Saskatchewan matches /api/search total ({len(cards)} vs {api_total})")
     pg.screenshot(path=f"{SHOTS}/ux-search.png")
 
     pg.fill("#q", ""); pg.wait_for_timeout(1200)
     pg.click("#moreb"); pg.wait_for_timeout(1200)
+    n_before = len(pg.query_selector_all("#plist .p"))
     deep = pg.query_selector_all("#plist .p")[70]
     sku = deep.get_attribute("data-sku")
     deep.click(); pg.wait_for_timeout(1500)
@@ -65,7 +90,7 @@ with sync_playwright() as p:
     pg.screenshot(path=f"{SHOTS}/ux-product.png")
     pg.click("#back"); pg.wait_for_timeout(1500)
     n2 = len(pg.query_selector_all("#plist .p"))
-    check(n2 == 100, f"back restores the list at the same length ({n2})")
+    check(n2 == n_before, f"back restores the list at the same length ({n2} vs {n_before} before opening)")
     vis = pg.evaluate(f"""(() => {{ const r = document.querySelector('#plist .p[data-sku="{sku}"]').getBoundingClientRect();
                          return r.top > 0 && r.bottom < innerHeight; }})()""")
     check(vis, "back scrolls to the card that was opened")

@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,14 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+# CHROME_PATH overrides which Chromium binary Playwright launches. Unset, we
+# fall back to the sandbox's pre-fetched build if present, else Playwright's
+# own bundled Chromium (no executable_path -- `playwright install` handles it).
+_SANDBOX_CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+CHROME = os.environ.get("CHROME_PATH") or (
+    _SANDBOX_CHROME if os.path.exists(_SANDBOX_CHROME) else None
+)
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -182,7 +191,7 @@ def main() -> int:
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            b = p.chromium.launch(executable_path="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+            b = p.chromium.launch(**({"executable_path": CHROME} if CHROME else {}))
             pg = b.new_page()
             seen = []
 
