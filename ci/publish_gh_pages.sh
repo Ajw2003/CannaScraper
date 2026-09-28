@@ -54,6 +54,16 @@ for attempt in 1 2 3 4 5 6; do
   fi
 
   cp -r "$SITE_DIR"/. "$WORK/pub/"
+  # Browsers may keep a Pages file for 10 minutes, so after an update a phone
+  # could run the new page against the old script (seen 2026-09-28: the new
+  # price menu showed, the member prices it needs did not). Naming the script
+  # by its content makes any change to it a different URL.
+  if [ -f "$WORK/pub/static-api.js" ]; then
+    API_VER="$(sha256sum "$WORK/pub/static-api.js" | cut -c1-12)"
+    sed -i "s|src=\"static-api.js\"|src=\"static-api.js?v=$API_VER\"|" "$WORK/pub/index.html"
+    grep -q "static-api.js?v=$API_VER" "$WORK/pub/index.html" \
+      || { echo "error: could not stamp static-api.js into index.html" >&2; exit 1; }
+  fi
   if [ -n "$NEW_DATA" ]; then
     cp "$NEW_DATA"/*.json "$WORK/pub/data/"
   fi
