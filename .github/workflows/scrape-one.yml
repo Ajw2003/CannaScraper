@@ -147,6 +147,17 @@ jobs:
           python ci/export_province.py --province "$PROVINCE" --db "$DB" \
             --out "$RUNNER_TEMP/out" --run-summary run.json
 
+      # A short-lived copy of exactly what this run produced, independent of
+      # whatever gh-pages ends up with -- useful for debugging a bad publish
+      # without needing the history DB.
+      - name: Upload this run's export
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-${{ env.SLUG }}
+          path: ${{ runner.temp }}/out/${{ env.SLUG }}.json
+          retention-days: 3
+          if-no-files-found: error
+
       # Keeps only the newest good row per product per store, so the file stays
       # one snapshot in size instead of growing every hour toward the 2 GB
       # release-file limit. The script refuses to save if pruning would change
@@ -201,6 +212,7 @@ jobs:
             GOT=$(curl -fsSL "${SITE%/}/data/index.json?nocache=$attempt" 2>/dev/null \
                   | python -c "import json,sys;print(next((p['generated_at'] for p in json.load(sys.stdin)['provinces'] if p['slug']=='$SLUG'),''))" 2>/dev/null || true)
             if [ "$GOT" = "$WANT" ]; then
+              curl -fsS -o /dev/null "$SITE"
               echo "Live at $SITE with $PROVINCE data from $GOT."
               echo "$PROVINCE live at $SITE, data from $GOT" >> "$GITHUB_STEP_SUMMARY"
               exit 0

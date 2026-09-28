@@ -21,9 +21,15 @@ def main(argv: list[str]) -> int:
     data = Path(argv[1])
     provinces = []
     for f in sorted(data.glob("*.json")):
-        if f.name == "index.json":
+        # Non-province files published alongside the province exports: the
+        # slim catalogue and the copied registries. Skipped by name, and
+        # again by shape below, so a future non-province file that slips
+        # past the name check still doesn't crash this on a missing key.
+        if f.name in ("index.json", "catalog.json", "stores.json", "geocode.json"):
             continue
         d = json.loads(f.read_text(encoding="utf-8"))
+        if "province" not in d:
+            continue
         provinces.append({
             "province": d["province"], "slug": f.stem,
             "generated_at": d["generated_at"],
