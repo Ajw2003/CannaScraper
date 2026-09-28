@@ -93,11 +93,27 @@
   // (0 < n < ~3000), which %g always renders in fixed notation (never
   // scientific) at that precision -- so this only needs the fixed-notation
   // branch of %g, not the general algorithm.
+  // Python's format(x, '.Nf'). JavaScript's toFixed rounds an exact half up
+  // (31.25 -> "31.3"); Python rounds it to even (31.25 -> "31.2"). Both work
+  // from the exact binary value, so they only disagree when that value is
+  // exactly halfway -- which a real THC reading of 31.25 is (CI parity,
+  // 2026-09-28: the card said "31.2-31.3%" where the original said "31.2%").
+  function pyFixed(x, dp) {
+    const exact = x.toFixed(Math.min(100, dp + 30));
+    const cut = exact.indexOf('.') + (dp > 0 ? dp + 1 : 0);
+    const kept = exact.slice(0, dp > 0 ? cut : exact.indexOf('.'));
+    const rest = exact.slice(exact.indexOf('.') + dp + 1);
+    const isHalf = /^50*$/.test(rest);
+    const lastDigit = Number(kept.replace('.', '').slice(-1));
+    if (isHalf && lastDigit % 2 === 0) return kept;
+    return x.toFixed(dp);
+  }
+
   function pyG(n) {
     if (n === 0) return '0';
     const exp = Math.floor(Math.log10(Math.abs(n)) + 1e-9);
     const dp = Math.max(0, 5 - exp);
-    let s = n.toFixed(dp);
+    let s = pyFixed(n, dp);
     if (s.indexOf('.') !== -1) s = s.replace(/0+$/, '').replace(/\.$/, '');
     return s;
   }
@@ -116,10 +132,10 @@
     const [lo, hi] = span;
     if (lo === null || lo === undefined || hi === null || hi === undefined) return '';
     const dp = hi >= 1 ? 1 : 2;
-    if (Number(lo.toFixed(dp)) === Number(hi.toFixed(dp))) return potency(lo, category);
+    if (Number(pyFixed(lo, dp)) === Number(pyFixed(hi, dp))) return potency(lo, category);
     const cat = (category || '').trim().toLowerCase();
     const unit = (MG_CATEGORIES.has(cat) || lo > 100) ? ' mg' : '%';
-    return `${lo.toFixed(dp)}–${hi.toFixed(dp)}${unit}`;
+    return `${pyFixed(lo, dp)}–${pyFixed(hi, dp)}${unit}`;
   }
 
   // db.py:574-586

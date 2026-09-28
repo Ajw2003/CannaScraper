@@ -47,7 +47,12 @@ jobs:
             echo "::warning::GitHub Pages is not switched on for this repo, so nothing is served."
             exit 0
           fi
-          WANT=$(sha256sum site/index.html | cut -d' ' -f1)
+          # The live page is site/index.html with its script name stamped
+          # (ci/stamp_page.sh), so build that and compare against it.
+          EXPECT="$RUNNER_TEMP/expected"
+          mkdir -p "$EXPECT" && cp site/index.html site/static-api.js "$EXPECT/"
+          ci/stamp_page.sh "$EXPECT"
+          WANT=$(sha256sum "$EXPECT/index.html" | cut -d' ' -f1)
           for attempt in $(seq 1 20); do
             GOT=$(curl -fsSL "${SITE%/}/index.html?nocache=$attempt" 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
             if [ "$GOT" = "$WANT" ]; then

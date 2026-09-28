@@ -54,6 +54,9 @@ for attempt in 1 2 3 4 5 6; do
   fi
 
   cp -r "$SITE_DIR"/. "$WORK/pub/"
+  # Name static-api.js by its content so no browser pairs a new page with
+  # an old cached script (see ci/stamp_page.sh).
+  "$HERE/stamp_page.sh" "$WORK/pub"
   if [ -n "$NEW_DATA" ]; then
     cp "$NEW_DATA"/*.json "$WORK/pub/data/"
   fi
