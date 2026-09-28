@@ -55,7 +55,7 @@ concurrency:
 
 env:
   # The provinces a scheduled run covers. Adding one is adding it here.
-  PROVINCES_DEFAULT: '["Saskatchewan"]'
+  PROVINCES_DEFAULT: '["Saskatchewan", "Alberta", "Ontario", "Manitoba", "British Columbia"]'
   # Release that holds history-<slug>.db. The tag never changes; files in it
   # are replaced in place each run.
   HISTORY_TAG: scrape-history
