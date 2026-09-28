@@ -397,8 +397,15 @@ function showProduct(sku){
     </div>
     <div class="summary"><span class="big">${items.length}</span> store${items.length===1?'':'s'} in stock</div>
     <div class="card">${rowsHtml || '<div class="empty">No stores.</div>'}</div>`;
-  $('#back').onclick = () => { currentSku = null; $('#out').innerHTML = ''; };
-  window.scrollTo({top: 0, behavior: 'smooth'});
+  // The detail renders below the product list, so bring it into view; Back
+  // returns to the card that was clicked rather than the top of the list.
+  $('#back').onclick = () => {
+    currentSku = null;
+    $('#out').innerHTML = '';
+    const card = document.querySelector(`#plist .p[data-sku="${CSS.escape(sku)}"]`);
+    if (card) card.scrollIntoView({behavior: 'smooth', block: 'center'});
+  };
+  $('#out').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 </script>
 </body>
