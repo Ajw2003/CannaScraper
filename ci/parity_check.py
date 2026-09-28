@@ -100,6 +100,14 @@ def diff(a, b, path="$"):
         for i, (x, y) in enumerate(zip(a, b)):
             yield from diff(x, y, f"{path}[{i}]")
     else:
+        # Age fields were rounded to 0.1 h by normalize(), but the two sides
+        # read the clock seconds apart, so an age right on a rounding
+        # boundary can land one step apart (15.1 vs 15.2). One step is the
+        # clock, not a difference; more than one is real.
+        key = path.rsplit(".", 1)[-1]
+        if (key in ROUND_H_KEYS and isinstance(a, (int, float))
+                and isinstance(b, (int, float)) and abs(a - b) <= 0.1 + 1e-9):
+            return
         if a != b:
             yield f"{path}: {a!r} (old) vs {b!r} (static)"
 
