@@ -438,6 +438,7 @@
     let data;
     try { data = await loadProvince(province); } catch (e) { return {}; }
     const facts = {};
+    const storeNames = new Map((data.stores || []).map(st => [String(st.id), st.name]));
     for (const [sku, rawRows] of Object.entries(data.stock || {})) {
       const rows = rawRows.map(a => stockRow(a, data.times));
       const available = rows.some(r => r.available);
@@ -445,22 +446,28 @@
       const thc = spanFromValues(rows.map(r => r.thc));
       const cbd = spanFromValues(rows.map(r => r.cbd));
       // Added on the Pages site (approved 2026-09-28): how many stores in
-      // the province have it, and the lowest shelf price among them, for
-      // the search cards. Not part of the original server's answer.
-      // The member and Elite prices were added at the user's request on
-      // 2026-09-28 (lowest tier price among in-stock rows).
+      // the province have it, for the search cards. Not part of the
+      // original server's answer.
+      // Changed 2026-09-28, at the user's request: the card used to show the
+      // province's lowest shelf, member and Elite prices separately, and the
+      // member figure came from a far store that the product page (nearest
+      // first) did not lead with, so it never matched a local listing. Now
+      // ONE number: the lowest price actually paid at any in-stock store,
+      // computed as the product page's bold price (tier_amt, else shelf
+      // price), with the store's name and which tier it is. Ties go to the
+      // store that comes first in the data.
       const inStock = rows.filter(r => r.available);
-      const prices = inStock.map(r => r.price).filter(v => v !== null && v !== undefined);
-      const tierFrom = label => {
-        const t = inStock.filter(r => r.tier_label === label)
-          .map(r => r.tier_amt).filter(v => v !== null && v !== undefined);
-        return t.length ? Math.min(...t) : null;
-      };
+      let best = null;
+      for (const r of inStock) {
+        const paid = r.tier_amt ?? r.price;
+        if (paid === null || paid === undefined) continue;
+        if (best === null || paid < best.paid) best = { paid, row: r };
+      }
       facts[sku] = { available, category, thc, cbd,
                      stores: inStock.length,
-                     price_from: prices.length ? Math.min(...prices) : null,
-                     member_from: tierFrom('member'),
-                     elite_from: tierFrom('ELITE') };
+                     lowest: best ? best.paid : null,
+                     lowest_store: best ? (storeNames.get(best.row.store_id) ?? null) : null,
+                     lowest_tier: best ? best.row.tier_label : null };
     }
     _factsCache.set(province, facts);
     return facts;
@@ -696,13 +703,14 @@
     }
 
     // Added on the Pages site (user's request, 2026-09-28): order the whole
-    // filtered list by shelf price before paging. No price goes last either
+    // filtered list by `lowest` (the lowest price paid at an in-stock store,
+    // the number the card shows) before paging. No price goes last either
     // way; ties keep the earlier order (Array.sort is stable). No `sort`
     // param leaves the original order untouched.
     const sort = params.get('sort');
     if (sort === 'price_asc' || sort === 'price_desc') {
       const dir = sort === 'price_asc' ? 1 : -1;
-      const pf = v => { const f = facts[v.sku]; return f ? f.price_from : null; };
+      const pf = v => { const f = facts[v.sku]; return f ? f.lowest : null; };
       filtered = [...filtered].sort((a, b) => {
         const x = pf(a), y = pf(b);
         const nx = x === null || x === undefined, ny = y === null || y === undefined;
@@ -722,9 +730,9 @@
           category: f.category || v.category,
           in_stock: !!f.available,
           stores: f.stores || 0,
-          price_from: f.price_from === undefined ? null : f.price_from,
-          member_from: f.member_from === undefined ? null : f.member_from,
-          elite_from: f.elite_from === undefined ? null : f.elite_from,
+          lowest: f.lowest === undefined ? null : f.lowest,
+          lowest_store: f.lowest_store === undefined ? null : f.lowest_store,
+          lowest_tier: f.lowest_tier === undefined ? null : f.lowest_tier,
           thc: potencySpan(f.thc, f.category || ''),
           cbd: potencySpan(f.cbd, f.category || ''),
           image: thumb(v.image, 160),

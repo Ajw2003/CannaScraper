@@ -155,3 +155,4 @@ run `--probe-egress` against their own configured routes first.
 
 - **Member/Elite prices and price ordering on the Pages site (2026-09-28)** — on branch
   `claude/sharp-ptolemy-547028`, not merged; `ci/pages_ux_check.py` and `ci/run_parity.sh` pass locally.
+  On `claude/lowest-store-price` the card's member/Elite/from prices are replaced by one "lowest $X at <store>" (the product page's bold price), so the card matches a listing the user can find.
