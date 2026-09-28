@@ -102,8 +102,12 @@ Verified locally in Chromium against the published gh-pages data (14 checks, all
 `ci/parity_check.py` 67/67 identical. **Not yet run:** on GitHub Pages itself, and a real failed
 store through the export on Actions. Seven further changes are proposed, not built
 (`docs/plans/restore-original-page.md`). Scheduling: one scheduled run fired today (09:59 UTC)
-out of about twelve slots; the published data was 5.2 h old at 16:00 UTC. PR #10 (cron moved to
-:17, 5-minute probe) merged 15:43 UTC; its result is pending.
+out of about twelve slots; the 5-minute probe from PR #10 fired 0 times in 26 min. This is
+documented GitHub behaviour (scheduled runs can be delayed or dropped under load). Replaced on
+the same branch, not merged: each scrape run dispatches the next one, a watchdog loop restarts
+the chain, and GitHub's schedule only restarts the watchdog (`docs/4-systems/hourly-trigger.md`).
+Tested locally: actionlint clean, `ci/test_chain_scripts.sh` 9/9 with a stub `gh`. **Not yet run
+on GitHub.** A manual full scrape was started 16:05 UTC.
 
 ## The one thing that is not what it looks like
 

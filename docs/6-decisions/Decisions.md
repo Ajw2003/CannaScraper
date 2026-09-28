@@ -6,6 +6,33 @@ flipping its `Status` line to `Superseded`, pointing at the entry that replaced 
 
 ---
 
+## 2026-09-28 — Hourly runs chain themselves; GitHub's schedule is only the backstop
+
+**Context.** `scrape-all.yml`'s hourly `schedule:` trigger was unreliable: it fired once
+(09:59 UTC, run 36406897565) across roughly 12 hourly slots on 2026-09-28, and a `*/5 * * * *`
+diagnostic probe (`schedule-probe.yml`) fired zero times in 26 minutes after being merged.
+GitHub's own docs say scheduled runs "can be delayed during periods of high loads... some queued
+jobs may be dropped," and others have hit the same thing (a `*/5` job firing ~5% of the time:
+https://github.com/orgs/community/discussions/156282). The user ruled out running anything on a
+service outside GitHub (no external cron pinger, no third-party scheduler) to work around it.
+
+**Decision.** Each `scrape-all.yml` run dispatches its own successor via `workflow_dispatch`
+(which, unlike token-triggered events, always creates a new run) about an hour after it started,
+and makes sure a new watchdog workflow, `scrape-watchdog.yml` ("Keep the hourly scrape going"),
+has a loop running. That loop polls every few minutes, restarts the scrape chain if it goes
+stale, and dispatches its own successor before its ~5.5h window (under GitHub's 6h job cap)
+runs out. The watchdog's own `schedule:` cron, every 5 minutes off the hour, is the only
+`schedule:` trigger left anywhere in this system, and only has to succeed at noticing "no loop
+is running" -- not at doing the actual hourly work. See `docs/4-systems/hourly-trigger.md`.
+
+**Why.** `workflow_dispatch` and `repository_dispatch` are documented as the only triggers that
+always create a run even under the repo's own token, so self-dispatch is the reliable primitive
+available; wrapping it in a self-healing pair (chain + watchdog, each restarting the other)
+means no single missed trigger can stop the hourly cadence for good, entirely within GitHub
+Actions.
+
+**Status.** Standing.
+
 ## 2026-09-28 — Pages site dropped features without saying so
 
 **Context.** After the move to GitHub Pages the user noticed the site "feels like it's missing a

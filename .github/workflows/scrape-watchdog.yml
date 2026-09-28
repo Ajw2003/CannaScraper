@@ -1,0 +1,38 @@
+name: Keep the hourly scrape going
+
+# The scrape chain (scrape-all.yml dispatching its own next run) has no
+# restarter of its own -- if a dispatch ever fails or a run hangs, nothing
+# brings it back. This workflow is that restarter. GitHub's `schedule:`
+# trigger is unreliable (see docs/4-systems/hourly-trigger.md), so instead
+# of trying to run the actual restart logic on a schedule, this wakes up
+# every 5 minutes and just checks whether a watchdog loop is already
+# running; if not, it starts one that polls for up to ~5.5 hours and
+# dispatches its own successor before GitHub's 6h job cap would kill it.
+# Each 5-minute wakeup that finds a loop already running exits in seconds,
+# so the frequent schedule is cheap even though it is unreliable.
+
+on:
+  schedule:
+    - cron: '2-57/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      successor_of:
+        description: Run id of the watchdog run that dispatched this one (internal; leave blank for a manual run).
+        type: string
+        default: ''
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SUCCESSOR_OF: ${{ github.event.inputs.successor_of }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: ci/scrape_watchdog.sh
