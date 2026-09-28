@@ -93,6 +93,22 @@ runs, and its cause is **unknown**. **Not yet run:** anything on GitHub (the new
 the restored workflow steps, the page against real cannacabana.com), and the page with real
 network access to Nominatim or the scan API.
 
+M7, additions back on the restored page (2026-09-28, branch `claude/sharp-ptolemy-547028`, not
+merged). The restore (PR #9) is live. On top of it, the user approved bringing back the first
+static site's additions: card "N stores · from $X", data age under the heading, a named
+failed-stores notice (the export now writes `run.failed_stores`), browsing with an empty box,
+"view" links per store, the remembered province, "Back to search" and cards that fit a phone.
+Verified locally in Chromium against the published gh-pages data (14 checks, all pass) and
+`ci/parity_check.py` 67/67 identical. **Not yet run:** on GitHub Pages itself, and a real failed
+store through the export on Actions. Seven further changes are proposed, not built
+(`docs/plans/restore-original-page.md`). Scheduling: one scheduled run fired today (09:59 UTC)
+out of about twelve slots; the 5-minute probe from PR #10 fired 0 times in 26 min. This is
+documented GitHub behaviour (scheduled runs can be delayed or dropped under load). Replaced on
+the same branch, not merged: each scrape run dispatches the next one, a watchdog loop restarts
+the chain, and GitHub's schedule only restarts the watchdog (`docs/4-systems/hourly-trigger.md`).
+Tested locally: actionlint clean, `ci/test_chain_scripts.sh` 9/9 with a stub `gh`. **Not yet run
+on GitHub.** A manual full scrape was started 16:05 UTC.
+
 ## The one thing that is not what it looks like
 
 **The egress pool reads as a completed throughput feature, but ships disabled by default and

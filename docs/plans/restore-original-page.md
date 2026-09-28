@@ -116,21 +116,49 @@ again; the publish log says again which data it kept and when it makes the first
   reports it on the job, so the page shows "Some stores failed: <store>: <reason>". The failed
   store still keeps its previous data, as before. Test: `ci/live_parity_check.py` expects this.
 
-## Proposed improvements — NOT built, awaiting the user
+### Additions from the first static site, brought back (approved 2026-09-28)
 
-1. Show the data's age at the top of the page, before any product is opened.
-2. Notice when stores failed on the last run (and name them).
-3. Browse without typing: list products for a province or category with an empty search box.
-4. Store count and lowest price on each product card.
-5. A "view" link from each store row to that store's product page on cannacabana.com.
-6. Remember the chosen province and location between visits.
-7. Include products missing from the catalogue file but stocked in the province (e.g. Homestead
-   Bandwagon Sativa), which the original can't show.
-8. In the index panel, link each province to its "Scrape one province" run page on GitHub, so a
-   rebuild is one click for anyone signed in to GitHub with access.
-9. Replace the "Live" options with a note that data refreshes hourly.
+The user asked for the price on the search cards and every other addition the first static site
+(`df8a133:site/index.html`) had made to come back. Each is marked "added on the Pages site" in
+the code and sits on top of the original page without changing what the original does:
 
-Items 1–6 existed on the static site built earlier and were removed by this restore.
+| Addition | Where | Test |
+|---|---|---|
+| Card line "N stores · from $X": stores in the province that have it, lowest shelf (market) price among them, as the first static site showed it | `static-api.js:provinceFacts`, `apiSearch`; `index.html:card` | `ux_test`: card shows count and price |
+| "<Province> stock updated X ago · rebuilt every hour" under the heading, before any product is opened | `static-api.js:apiProvinceSummary`; `index.html:loadSummary` | follows province change |
+| Notice naming the stores that failed on the last run ("showing their older data instead"); the export now records their names (`run.failed_stores`, from `workqueue.failures`) | `ci/export_province.py`; `index.html:loadSummary` | export of a DB with two failed stores names both; page shows them |
+| Browse without typing: an empty box lists the province's products A to Z through the same filters, 50 at a time; one letter still does nothing | `static-api.js:apiSearch`; `index.html` input handler, `rerun` | 50 cards on load |
+| "view" link on each store row to that store's page on cannacabana.com (the URL the original server already built but never showed) | `index.html:render` | links present |
+| The chosen province is remembered on the device | `index.html` provinces(), `#prov` change | kept after reload |
+| "← Back to search" returns to the same list, scrolled to the card that was opened; opening a product brings it into view | `index.html:render`, `load` | list length and card position kept |
+| Cards wrap at phone width instead of pushing the page sideways (the original overflowed by 113 px at 390 px wide with results showing) | `index.html` CSS | no sideways scroll at 390 px |
+
+Parity after these: `ci/parity_check.py` 67 of 67 requests identical to the old server (the two
+added search fields, `stores` and `price_from`, are excluded by name).
+
+## Proposed changes — NOT built, awaiting the user
+
+Changes to, or removals from, the original. Each needs a yes or a scrap.
+
+1. **Card price matches the product page.** The card's "from $X" is the shelf price; the product
+   page leads with the member/ELITE price (e.g. card from $5.99, page $2.99). Show the lowest
+   price the page would show in bold, with the shelf price struck through, as the page does.
+2. **Distance measured from the chosen province.** With no location typed, the original measures
+   from Calgary, AB whatever the province, so Saskatchewan shows "10 nearest to Calgary" at
+   520 km. Use a central city of the chosen province instead (Regina, Winnipeg, Toronto,
+   Vancouver, Calgary).
+3. **Remember the typed location too**, like the province.
+4. **A labelled location button**: "📍 Use my location" rather than the bare pin, as the first
+   static site had.
+5. **Products stocked but missing from the catalogue file** (e.g. Homestead Bandwagon Sativa)
+   become searchable; the original can't show them.
+6. **Index panel: link each province to its "Scrape one province" run page** on GitHub, so a
+   rebuild is one click for anyone signed in with access.
+7. **Rebuild buttons with a GitHub token** entered on the page (see "Verified" above; issue #7).
+
+Removals the first static site made that I recommend **not** repeating, because the original is
+better for the reader: the scope selector (5/10/25/whole province), typing a city or postal code,
+the catalogue index panel, "not in stock" and "not checked" rows, and search ranking.
 
 ## Verification
 

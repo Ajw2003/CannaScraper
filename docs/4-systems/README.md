@@ -12,6 +12,7 @@ its data. Each covers what it owns, how it works, its invariants, and its traps.
 | Persistence (db.py) | The SQLite history: schema, the `observations` view, writes | [persistence.md](persistence.md) |
 | Web app, auth & tunnel | The FastAPI server, the admin password, the public URL | [web-app-auth-tunnel.md](web-app-auth-tunnel.md) |
 | Packaging & build | Turning the checkout into `CannaCabana.exe` and stamping what it is | [packaging-and-build.md](packaging-and-build.md) |
+| Hourly trigger | Getting the scrape to actually run hourly despite GitHub's unreliable `schedule:` | [hourly-trigger.md](hourly-trigger.md) |
 
 ## Considered and left out
 

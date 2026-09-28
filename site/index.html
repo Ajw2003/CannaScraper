@@ -120,11 +120,24 @@ a.idxlink{color:var(--accent);cursor:pointer}
 #buildnote{border:1px solid var(--low);border-radius:9px;background:var(--lowbg);
   color:var(--low);padding:9px 13px;margin-bottom:10px;font-size:13px}
 #buildnote button{margin-left:4px}
+
+/* added on the Pages site (approved 2026-09-28) */
+.age{margin:-6px 0 12px;font-size:13px}
+.notice{border:1px solid var(--low);border-radius:9px;background:var(--lowbg);
+  color:var(--low);padding:9px 13px;margin:0 0 14px;font-size:13px}
+.p .s .from{color:var(--fg);font-weight:600}
+/* The original's cards were wider than a phone screen once a title or the
+   THC/CBD badges ran long; let them wrap instead. */
+.p{min-width:0;white-space:normal}
+.p>div:last-child{flex:1;min-width:0}
+.p .t,.p .s{overflow-wrap:break-word}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Where's it in stock?</h1>
+  <div id="age" class="age muted"></div>
+  <div id="notice" class="notice hide"></div>
 
   <div id="buildnote" class="hide"></div>
 
@@ -194,7 +207,9 @@ function money(v){ return (v || v === 0) ? '$' + Number(v).toFixed(2) : '—'; }
 $('#q').addEventListener('input', e => {
   clearTimeout(timer);
   const q = e.target.value.trim();
-  if (q.length < 2) { $('#plist').innerHTML = ''; $('#more').innerHTML = ''; return; }
+  // An empty box browses everything (added on the Pages site); one letter
+  // is still too little to search on, so the list stays as it is.
+  if (q.length === 1) return;
   timer = setTimeout(() => search(q), 180);
 });
 
@@ -207,7 +222,10 @@ function card(p){
       <div><div class="t">${esc(p.title)}${p.in_stock === false ? '<span class="sold">none in province</span>' : ''}</div>
       <div class="s">${esc(p.brand)} · ${esc(p.size)} · ${esc(p.category)}${
         p.thc ? `<span class="pot">THC ${esc(p.thc)}</span>` : ''}${
-        p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}</div></div>
+        p.cbd ? `<span class="pot">CBD ${esc(p.cbd)}</span>` : ''}${
+        p.stores ? `<br>${p.stores} store${p.stores === 1 ? '' : 's'}${
+          p.price_from !== null && p.price_from !== undefined
+            ? ` · from <span class="from">${money(p.price_from)}</span>` : ''}` : ''}</div></div>
     </button>`;
 }
 
@@ -216,8 +234,12 @@ function wireCards(){
     b.onclick = () => load(b.dataset.sku));
 }
 
-async function search(q, offset = 0){
-  const sp = new URLSearchParams({q, limit: PAGE, offset,
+// How many cards the list is showing, so "Back to search" can bring the
+// same list back, down to the card that was opened.
+let listShown = 0;
+
+async function search(q, offset = 0, limit = PAGE){
+  const sp = new URLSearchParams({q, limit, offset,
     province: $('#prov').value, stocked_only: $('#stocked').checked,
     category: $('#cat').value});
   // A failed search used to render nothing at all -- no results and no
@@ -250,6 +272,7 @@ async function search(q, offset = 0){
 
   // Say how many matched, and offer the rest -- never truncate in silence.
   const shown = offset + d.products.length;
+  listShown = shown;
   const note = d.hidden
     ? ` · ${d.hidden} hidden (not stocked in ${esc(d.province)})` : '';
   $('#more').innerHTML = shown < d.total
@@ -275,12 +298,51 @@ function esc(s){ return (s||'').replace(/[<>&"]/g,
   let d;
   try{ d = await (await fetch('/api/provinces')).json(); }
   catch(e){ return searchError('Could not reach the server.'); }
+  // The last province picked on this device wins over the default
+  // (added on the Pages site).
+  const saved = lsGet('province');
+  const pick = d.provinces.some(p => p.name === saved) ? saved : d.default;
   $('#prov').innerHTML = d.provinces.map(p =>
-    `<option value="${esc(p.name)}"${p.name === d.default ? ' selected' : ''}>
+    `<option value="${esc(p.name)}"${p.name === pick ? ' selected' : ''}>
        ${esc(p.name)} (${p.stores})</option>`).join('');
   if (d.home && typeof d.home === 'string') $('#near').placeholder = d.home;
   loadCats();
+  loadSummary();
+  rerun();
 })();
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+
+// ---- data age and failed stores (added on the Pages site) -----------------
+// How old the chosen province's numbers are, before any product is opened,
+// and which stores the last run could not reach (their older data is shown).
+async function loadSummary(){
+  const prov = $('#prov').value;
+  let r, d;
+  try{
+    r = await fetch('/api/province/summary?' + new URLSearchParams({province: prov}));
+    d = await r.json();
+  }catch(e){
+    $('#age').textContent = `Could not read when ${prov}'s data was published.`;
+    return;
+  }
+  if (!r.ok){
+    $('#age').textContent = d.error || `No data published for ${prov} yet.`;
+    $('#notice').classList.add('hide');
+    return;
+  }
+  $('#age').innerHTML = `${esc(prov)} stock updated <b title="${esc(d.generated_at || '')}">${age(d.age_hours)}</b>`
+    + ` · rebuilt every hour`;
+  if (d.failed > 0){
+    const names = (d.failed_stores || []).join(', ');
+    $('#notice').textContent = `${d.failed} store${d.failed === 1 ? '' : 's'} failed on the last `
+      + `run${names ? ' (' + names + ')' : ''} — showing their older data instead.`;
+    $('#notice').classList.remove('hide');
+  } else {
+    $('#notice').classList.add('hide');
+  }
+}
 
 // ---- categories -----------------------------------------------------------
 async function loadCats(){
@@ -439,11 +501,15 @@ $('#near').addEventListener('keydown', e => {
   if (e.key === 'Enter' && current) load(current);
 });
 $('#top').onchange = () => { if (current) load(current); };
-$('#prov').onchange = () => { loadCats(); rerun(); if (current) load(current); };
+$('#prov').onchange = () => {
+  lsSet('province', $('#prov').value);
+  loadCats(); loadSummary(); rerun(); if (current) load(current);
+};
 $('#stocked').onchange = () => { loadCats(); rerun(); };
-function rerun(){
+function rerun(limit = PAGE){
   const q = $('#q').value.trim();
-  if (q.length >= 2) search(q);
+  if (q.length === 1) return Promise.resolve();
+  return search(q, 0, limit);
 }
 $('#src').onchange  = () => { if (current) load(current); };
 $('#sort').onchange = () => { if (current) load(current); };
@@ -469,6 +535,8 @@ async function load(sku){
   current = sku;
   $('#plist').innerHTML = ''; $('#more').innerHTML = '';
   $('#out').innerHTML = '<div class="muted">Loading…</div>';
+  // Bring the product into view wherever the list had been scrolled to.
+  $('#out').scrollIntoView({block: 'start'});
   const r = await fetch('/api/results?' + params(sku));
   if (!r.ok){ $('#out').innerHTML = '<div class="muted">Not found.</div>'; return; }
   render(await r.json());
@@ -522,12 +590,14 @@ function render(d){
             ? `<s>${money(r.market)}</s>` : ''}${save}` : '';
     return `<div class="r ${r.available ? '' : 'out'}">
       <div class="qty">${stock}</div>
-      <div class="who"><b>${esc(r.store)}</b><span>${esc(r.city)}${dist ? ' · ' + dist : ''}</span></div>
+      <div class="who"><b>${esc(r.store)}</b><span>${esc(r.city)}${dist ? ' · ' + dist : ''}${
+        r.url ? ` · <a class="src" href="${esc(r.url)}" target="_blank" rel="noopener">view</a>` : ''}</span></div>
       <div class="pr">${priced}</div></div>`;
   }).join('');
 
   const hidden = d.results.length - inS;
   $('#out').innerHTML = `
+    <button id="back" style="margin-bottom:10px">← Back to search</button>
     <div class="hero">
       ${p.image ? `<img src="${p.image}" alt="">` : ''}
       <div><h2>${esc(p.title)}${d.results.some(r=>r.is_elite)
@@ -562,6 +632,18 @@ function render(d){
     tg.textContent = shown ? `Hide ${hidden} without it` : `Show ${hidden} without it`;
   };
   $('#refresh').onclick = refresh;
+
+  // Back to the same list, scrolled to the card that was opened (added on
+  // the Pages site).
+  const sku = p.sku;
+  $('#back').onclick = async () => {
+    current = null;
+    $('#out').innerHTML = '';
+    await rerun(Math.max(PAGE, listShown));
+    const c = document.querySelector(`#plist .p[data-sku="${CSS.escape(sku)}"]`);
+    if (c) c.scrollIntoView({block: 'center'});
+    else $('#q').scrollIntoView({block: 'start'});
+  };
 }
 
 // ---- live re-check --------------------------------------------------------

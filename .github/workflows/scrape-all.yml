@@ -1,9 +1,9 @@
 name: Scrape all provinces
 
 # The one place scraping is started from. Calls scrape-one.yml once per
-# province, either all at once (parallel, the hourly default) or one after
-# another (sequential). Each province is its own job, so each shows up, fails
-# and can be re-run on its own in the Actions tab.
+# province, either all at once (parallel, the default) or one after another
+# (sequential). Each province is its own job, so each shows up, fails and can
+# be re-run on its own in the Actions tab.
 #
 # Parallel is the default because every province runs on its own machine
 # with its own IP address and rate-limit budget, so running them together is
@@ -13,14 +13,18 @@ name: Scrape all provinces
 # There is deliberately no concurrency group here. Overlap is handled per
 # province inside scrape-one.yml, so if Ontario is still busy when the next
 # hour starts, Saskatchewan still refreshes on time.
+#
+# There is no `schedule:` trigger here. GitHub's schedule is unreliable (it
+# can be delayed under load or silently dropped, and that's what we saw:
+# see docs/4-systems/hourly-trigger.md for the evidence). Instead the `next`
+# job below dispatches the next run of this workflow itself once this run is
+# done, roughly an hour after this one started, and makes sure a watchdog
+# loop (scrape-watchdog.yml) is alive to restart the chain if it ever stalls.
+# The watchdog's own `schedule:` cron is the only schedule trigger left in
+# this system, and it only has to succeed at restarting the watchdog loop
+# itself, not the actual hourly work.
 
 on:
-  schedule:
-    # Hourly, at :17 -- off the hour because :00 is when GitHub's scheduler is
-    # busiest and runs are most often delayed. (Was :23 until 2026-09-28; no
-    # scheduled run ever fired at :23, so the time was changed to make GitHub
-    # register the schedule again.)
-    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -51,7 +55,8 @@ jobs:
     steps:
       - id: pick
         env:
-          # A scheduled run carries no inputs, so both fall back to defaults.
+          # A chained run (started by the previous run or the watchdog)
+          # carries no inputs, so both fall back to defaults.
           MODE: ${{ github.event.inputs.mode || 'parallel' }}
           CHOSEN: ${{ github.event.inputs.provinces || '' }}
         run: |
@@ -143,3 +148,22 @@ jobs:
           ci/publish_gh_pages.sh \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "$RUNNER_TEMP/out"
+
+  # Keeps the hourly chain going: dispatches the next scrape-all run (see the
+  # top-of-file comment) and makes sure the watchdog loop is alive. Runs
+  # whether the scrape passed or failed, and only on main -- a PR branch's
+  # run must not start chaining runs on main.
+  next:
+    needs: [plan, province, catalog]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: ci/scrape_chain_next.sh
