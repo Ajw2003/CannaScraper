@@ -38,9 +38,9 @@ that scraped one province does not drop the others' files.
 
 ## Out of scope for this step
 
-Live re-check, admin login, rebuild button (need a server). The other four provinces. Pruning
-old history from the DB (it grows each run; fine for months at Saskatchewan size, revisit
-before Alberta/Ontario).
+Live re-check, admin login, rebuild button (need a server). *(Later done on 2026-09-28: all
+five provinces, an hourly schedule, and pruning history to the current state each run — see
+`docs/6-decisions/Decisions.md`.)*
 
 ## Needs the user once
 

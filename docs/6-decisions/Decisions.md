@@ -6,6 +6,27 @@ flipping its `Status` line to `Superseded`, pointing at the entry that replaced 
 
 ---
 
+## 2026-09-28 — Scrape hourly; history keeps only the current state
+
+**Context.** The user asked for hourly runs once the repo was public. Each run appends a full
+copy of every in-stock row to the province's history DB: measured on Saskatchewan's second run
+(run 36363444274), 6.3 MB → 11.9 MB, i.e. ~5.6 MB for 15,148 rows. Ontario has ~8× the rows,
+so an estimated ~40 MB per run, ~1 GB/day hourly. The DB is stored as a GitHub release file,
+capped at 2 GB.
+
+**Decision.** Run hourly (`cron: '23 * * * *'`) and prune each province's DB after every run
+to the newest good row per (sku, store) — `ci/prune_history.py`. Past price/stock history is
+not kept.
+
+**Why.** The site, index_builder's sold-out close-out, and the failed-store fallback all read
+only `db.latest_observations()`, and the prune provably leaves that unchanged (the script
+compares before/after and refuses otherwise; on the real Saskatchewan DB it removed 15,171 of
+30,342 rows, 11.9 → 6.0 MB, with an identical export). Rejected: hourly plus 14 daily snapshots
+(~0.6 GB moved every hour for a history nothing reads yet); daily with 30 days (~1.2 GB, data
+up to a day old). Chosen by the user from those three options.
+
+**Status.** Standing.
+
 ## 2026-09-27 — Runner IP test passed; the Actions direction goes ahead
 
 **Context.** The 2026-09-27 "static Pages + per-province Actions" entry below was conditional on
