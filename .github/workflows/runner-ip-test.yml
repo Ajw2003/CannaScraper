@@ -1,0 +1,104 @@
+name: Runner IP test
+
+# Answers one question before anything else gets built: does cannacabana.com
+# serve GitHub Actions runners? The plan (docs/6-decisions/Decisions.md,
+# 2026-09-27) is a scheduled scrape per province on Actions feeding a GitHub
+# Pages site, and runners sit on Microsoft data-centre addresses, which some
+# sites refuse. If this fails, that plan does not work as designed.
+#
+# Two checks, cheapest first:
+#   1. ci/runner_ip_probe.py - one request to each endpoint the scraper uses.
+#   2. The real index builder on 3 Saskatchewan stores - proves the actual
+#      code path end to end, including paging and the rate limiter.
+#
+# Needs no secrets: every endpoint here answers unauthenticated
+# (config.py, API_SEND_AUTH = False).
+
+on:
+  workflow_dispatch:
+  # workflow_dispatch only appears once this file is on the default branch, so
+  # a push that touches the test also runs it. That is how it runs from a
+  # feature branch.
+  push:
+    paths:
+      - .github/workflows/runner-ip-test.yml
+      - ci/runner_ip_probe.py
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROBE_PROVINCE: Saskatchewan
+      # Output goes through `tee`, so Python would otherwise buffer it all
+      # until exit and a slow or stuck run would show nothing in the log.
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keeps history.db and caches out of the checkout (paths.py honours it).
+      # Set here because the runner context is not available in job-level env.
+      - name: Point the data directory at runner temp
+        run: echo "CANNACABANA_DATA=$RUNNER_TEMP/cannacabana-data" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The scraper core is stdlib only (requirements.txt), so nothing to install.
+
+      - name: Probe each endpoint
+        id: endpoints
+        continue-on-error: true
+        # pipefail, or tee's exit status hides the probe's and a failed probe
+        # reports success.
+        run: |
+          set -o pipefail
+          python ci/runner_ip_probe.py | tee probe.txt
+
+      - name: Index 3 stores with the real code
+        id: index
+        continue-on-error: true
+        # A hang here is a result too; the step timeout turns it into a failure
+        # with a log rather than a job that eats the whole budget.
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          mkdir -p "$CANNACABANA_DATA"
+          python index_builder.py --province "$PROBE_PROVINCE" --limit 3 \
+            --db "$CANNACABANA_DATA/test.db" | tee index.txt
+          python - <<'EOF' | tee rows.txt
+          import os, sqlite3
+          conn = sqlite3.connect(os.path.join(os.environ["CANNACABANA_DATA"], "test.db"))
+          rows = conn.execute("SELECT COUNT(*) FROM obs").fetchone()[0]
+          stores = conn.execute("SELECT COUNT(DISTINCT store_id) FROM obs").fetchone()[0]
+          print(f"{rows} observation rows across {stores} store(s)")
+          if rows == 0:
+              raise SystemExit("Index ran but stored nothing.")
+          EOF
+
+      - name: Verdict
+        run: |
+          {
+            echo "### Runner IP test"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Endpoint probe | ${{ steps.endpoints.outcome }} |"
+            echo "| Real index, 3 stores | ${{ steps.index.outcome }} |"
+            echo ""
+            echo '```'
+            cat probe.txt 2>/dev/null || echo "(no probe output)"
+            echo ""
+            tail -n 8 index.txt 2>/dev/null || echo "(no index output)"
+            cat rows.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.endpoints.outcome }}" != "success" ] || [ "${{ steps.index.outcome }}" != "success" ]; then
+            echo "::error::cannacabana.com did not serve this runner normally. See the summary."
+            exit 1
+          fi
+          echo "Both checks passed: GitHub runners can scrape cannacabana.com."
