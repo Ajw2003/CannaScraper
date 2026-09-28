@@ -69,7 +69,7 @@ M7, restructure (2026-09-28, PR #6). Scraping split into `scrape-one.yml` per pr
 `ci/publish_gh_pages.sh` tested locally against a bare repo, including three concurrent
 publishes. **Not yet run on GitHub:** the orchestrator, the reusable-workflow call, and the
 lease push against github.com only run once PR #6 merges. Also open: no scheduled run of the
-old workflow ever appeared (02:23 and 03:23 UTC were both missed), so whether GitHub fires the
+old workflow had appeared by 03:15 UTC (the 02:23 slot was missed), so whether GitHub fires the
 new hourly schedule still has to be confirmed.
 
 ## The one thing that is not what it looks like
