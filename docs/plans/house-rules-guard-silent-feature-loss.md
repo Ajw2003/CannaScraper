@@ -1,9 +1,31 @@
-# Guard: a replacement must not silently drop features
+# Guard: rebuilding existing behaviour must not silently drop features
 
 Input for a new guard in the house-rules plugin. The observation comes first, because the guard
 should be judged against it: any proposed rule or hook should have stopped this specific case.
 
-Status: **observation recorded, guard not built.** Written 2026-09-28.
+Status: **observation recorded, guard not built.** Written 2026-09-28; scope widened the same
+day at the user's request from "a replacement" to every kind of change listed under *Scope*.
+
+## Scope: which changes the guard covers
+
+Any change that **re-creates behaviour that already exists**, whatever it is called. Each of these
+is in scope, and none needs the others' shape to trigger:
+
+| Kind | What it looks like | Example from this repo |
+|---|---|---|
+| **Replacement** | A new thing takes over an existing thing's job, and the old one stays or is retired later | `site/index.html` taking over `web/index.html` (the observation below) |
+| **Port** | The same thing moved to another platform, runtime, host or framework | Desktop app + tunnel → static GitHub Pages site |
+| **Rebuild / rewrite** | The same thing written again from scratch, in place or beside it | Rewriting a page or module instead of editing it |
+| **Restructure** | The same behaviour split, merged or reorganised across files, jobs or modules | `scrape-province.yml` split into `scrape-one.yml` + `scrape-all.yml` (PR #6), done without an inventory |
+| **Migration** | Data, schema or storage moved to a new shape that the code then reads | `db.py`'s split of the `observations` table into `obs` / `products` / `store_meta` |
+
+What they share: after the change, the only features that exist are the ones someone
+**re-created**. Anything nobody listed is gone, and nothing in the diff says so, because a new file,
+a moved block or a split job doesn't show up as deleted lines. The restructure example is included
+because the same process gap applied there; whether it lost anything has **not** been checked.
+
+Out of scope: an ordinary edit that changes a few lines of an existing file. That's already
+visible in the diff, and `edit-place.md` covers it.
 
 ## What happened
 
@@ -50,10 +72,9 @@ ranked by match quality (`catalog.py:183-223`). The new one matches title and br
 
 ## Shape of the failure (what a guard should recognise)
 
-- A **new artifact replaces an existing one's role**: a new page, module, service, CLI or
-  workflow; a port to another platform or framework; a "v2"; a migration. The old one keeps
-  existing, or is retired later, so no file is ever "rewritten".
-- The replacement is **judged by whether it works**, not by whether it does **everything the
+- Existing behaviour is **re-created rather than edited**: by any of the kinds under *Scope*. The
+  old code keeps existing, is moved, or is retired later, so the loss never appears as a deletion.
+- The result is **judged by whether it works**, not by whether it does **everything the
   original did**.
 - **Forced losses are named, unforced ones are not.** Naming the forced ones makes the
   disclosure look complete.
@@ -64,31 +85,33 @@ ranked by match quality (`catalog.py:183-223`). The new one matches title and br
 
 ### Rule text (for `rules/house-rules.md`, with detail in `rules/detail/`)
 
-> **A replacement is a rewrite, even as a new file.** Before building something that takes over
-> an existing thing's job (a port, a migration, a v2, a new page or service), inventory what the
-> original does from its code, not from memory: every user-visible feature and behaviour. Show the
-> user the inventory marked keep / change / drop, with the reason for each drop. Verify the
-> replacement against the original with the same inputs, not only against itself. A dropped
-> feature the user wasn't shown is a regression, even if the new thing works.
+> **Re-creating existing behaviour needs a parity inventory first.** Before a replacement, port,
+> rebuild, rewrite, restructure or migration — any change after which the only features left are
+> the ones someone re-created — inventory what the original does from its code, not from memory:
+> every user-visible feature and behaviour, and for a restructure every trigger, input, output and
+> side effect. Show the user the inventory marked keep / change / drop, with the reason for each
+> drop. Verify the result against the original with the same inputs, not only against itself. A
+> dropped feature the user wasn't shown is a regression, even if the new version works.
 
 Also widen `edit-place.md`'s rule to name this case explicitly, so the two rules point at each
 other.
 
 ### Mechanical checks (hook ideas, in rough order of value)
 
-1. **Parity inventory required before a replacement plan is approved.** When a plan or
-   `ExitPlanMode` text contains replacement language ("port", "migrate", "replace", "move to",
-   "rewrite", "v2", "static version of", "instead of the old"), require a
+1. **Parity inventory required before the plan is approved.** When a plan or `ExitPlanMode`
+   text, or a delegation prompt, contains language for any in-scope kind — replace, port, move
+   to, rebuild, rewrite, redo, from scratch, restructure, split into, merge into, reorganise,
+   consolidate, migrate, v2, "static version of", "instead of the old" — require a
    `docs/plans/<name>-parity.md` with a keep / change / drop table before execution is delegated.
    The table's rows should cite the original's code (`file:line`), which shows it was read.
-2. **Delegation prompt check.** When an `Agent` / executor prompt describes building something that
-   replaces an existing file or feature, flag it unless the prompt either includes the parity
+2. **Delegation prompt check.** When an `Agent` / executor prompt describes an in-scope change to
+   an existing file or feature, flag it unless the prompt either includes the parity
    table or instructs the agent to read the original and inventory it first.
-3. **Parity verification before claiming done.** For a replacement, the completion report must
+3. **Parity verification before claiming done.** For any in-scope change, the completion report must
    include at least one like-for-like comparison (same input to old and new, outputs compared).
    The evidence-before-claims check could require a quoted old-vs-new result, not just a
    new-only one.
-4. **Feature-surface diff as a cheap tripwire.** For UI replacements, list the controls in both
+4. **Feature-surface diff as a cheap tripwire.** For a UI, list the controls in both
    files (`<select>`, `<button>`, `<input>`, `<option>` labels, fetch endpoints) and report the
    ones present in the old and absent in the new. For this case it would have flagged, among
    others: `#top` (5/10/25 nearest), `#sort`, `#src` (live check), `#near` (city/postal code),
@@ -100,15 +123,30 @@ other.
 
    lists 23 IDs only in the old page, including all six above plus the live-check (`refresh`,
    `prog`) and admin (`idxpanel`, `unlock`, `pw`) controls. It's crude (it can't see a changed
-   search rule or a demoted price), which is why it's a tripwire and not the guard.
+   search rule or a demoted price), which is why it's a tripwire and not the guard. The equivalent
+   for a restructure of workflows or jobs: diff the set of triggers (`on:` events, schedules,
+   inputs), outputs (published files, releases, artifacts) and side effects between the old and new
+   files; for a migration: diff the columns and queries that read them.
 
 ### How to test the guard
 
-Replay this case: the old `web/index.html`, `server.py` and `catalog.py`, and a request to "serve
+It passes only if it engages for each kind under *Scope*, not just the one that happened. Primary
+case, replay this one: the old `web/index.html`, `server.py` and `catalog.py`, and a request to "serve
 the page through GitHub Pages". The guard passes if, before any code is written, the user sees
 an inventory that includes at least the search-coverage change (title+brand vs.
 title/brand/category/size), the price-emphasis change, the unstocked-products toggle, city/postal
 location, nearest-N, and store sort, each marked keep / change / drop.
+
+Secondary cases, each of which must also trigger the inventory step:
+
+- **Restructure:** "split `scrape-province.yml` into a per-province workflow and an
+  orchestrator". The inventory should list the old workflow's triggers (schedule, dispatch with
+  province choice, push paths), its outputs (history release, `gh-pages`, the live-site check) and
+  its concurrency behaviour, marked keep / change / drop.
+- **Rebuild in place:** "rewrite `site/index.html` cleanly". Same inventory as the primary case.
+- **Migration:** "move history from SQLite to per-run JSON". The inventory should list every
+  reader of the old tables (`db.latest_observations`, `index_runs`, `scan_failure_streaks`, the
+  exporter, the pruner).
 
 ## Evidence
 
