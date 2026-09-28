@@ -119,7 +119,7 @@ Pages additions (see `docs/4-systems/ci-checks.md`). Verified locally, each chec
 differences** on 4 live checks, both runs; `page-additions` (`ci/run_pages_ux.sh` against real
 `gh-pages` data) **0 failures**, both runs; `ci/check_pages_in_step.sh` correct in both the failing
 and passing case; `selftest.py` 40/40; `ci/test_chain_scripts.sh` 9/9; actionlint and shellcheck
-clean. **Not yet run:** anything on GitHub Actions itself (the workflow has not been pushed/merged).
+clean. **On GitHub (PR #18, run 36472860741, 2026-09-28 19:31–19:35 UTC):** all six jobs green; parity downloaded the release DB, 67 requests no mismatches, 4 live checks 0 differences. The first run failed only on shellcheck SC2015 (the runner's shellcheck flags it, the local one did not), fixed in `086abd6`.
 
 ## The one thing that is not what it looks like
 
