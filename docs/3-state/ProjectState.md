@@ -72,6 +72,14 @@ lease push against github.com only run once PR #6 merges. Also open: no schedule
 old workflow had appeared by 03:15 UTC (the 02:23 slot was missed), so whether GitHub fires the
 new hourly schedule still has to be confirmed.
 
+M7, feature audit (2026-09-28): the Pages site was compared with the old app on the same
+Saskatchewan data — `docs/generated/pages-audit/index.html` (published at
+https://claude.ai/artifact/KkdAM1nhkJxsu9oHP1LV9y). Headline gaps: search matches title and
+brand only ("pre-roll" 232 → 7 in-stock results), member price de-emphasised, unstocked
+products invisible, no postal-code location or nearest-N. Two bugs: CBD rounding (0.46% → 0.5%)
+and the failed-stores notice can never name stores (`failed_stores` is never exported).
+Nothing from the audit has been fixed yet.
+
 ## The one thing that is not what it looks like
 
 **The egress pool reads as a completed throughput feature, but ships disabled by default and
