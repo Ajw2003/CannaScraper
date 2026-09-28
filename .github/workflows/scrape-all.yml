@@ -16,9 +16,11 @@ name: Scrape all provinces
 
 on:
   schedule:
-    # Hourly, at :23 -- off the hour because :00 is when GitHub's scheduler is
-    # busiest and runs are most often delayed.
-    - cron: '23 * * * *'
+    # Hourly, at :17 -- off the hour because :00 is when GitHub's scheduler is
+    # busiest and runs are most often delayed. (Was :23 until 2026-09-28; no
+    # scheduled run ever fired at :23, so the time was changed to make GitHub
+    # register the schedule again.)
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       mode:
