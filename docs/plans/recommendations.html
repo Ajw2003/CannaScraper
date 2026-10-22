@@ -389,7 +389,7 @@ const PAGE = {
       "\"Find for me\" mode",
       "Pick a goal; get ranked picks in stock near you.",
       null,
-      "Pickers: goal (sleep, calm, focus-calm, appetite, laugh, body and pain, creative), formats (flower, concentrate, cart, all-in-one, edible, capsule, infused pre-roll), things to avoid (any terpene or cannabinoid), a price limit, and a switch for judging products with no terpenes by their effect description. Results show the top picks per format, each with the matched terpenes and cannabinoids, the goal's evidence label, a 'judged by description' badge where that applies, the price, and which nearby stores have it and how many. A line under the results says this is not medical advice.",
+      "The goal picker offers sleep, calm, focus-calm, appetite, laugh, \"body and pain\" and creative. The format picker offers flower, concentrate, cart, all-in-one, edible, capsule and infused pre-roll. Visitors can also avoid any terpene or cannabinoid, set a price limit, and turn on an option that judges products listing no terpenes by their effect description. Results show the top picks per format, each with the matched terpenes and cannabinoids, the goal's evidence label, a 'judged by description' badge on products judged that way, the price, and the nearby stores that have it, with the number of units at each. A line under the results says this is not medical advice.",
       [
         "Search only works by product name.",
         "Search by what you want the product to do.",
@@ -538,7 +538,7 @@ const PAGE = {
           "B",
           "The page reads the full descriptions itself",
           0,
-          "No build change, but about 7 MB per visit, too slow on phones."
+          "No build change, but the page would download 6.9 MB on every visit (the catalogue with descriptions is 7,245,408 bytes), which is too slow on phones."
         ]
       ],
       "The build already has the descriptions, so the extra step is small and the page stays fast."
@@ -634,7 +634,7 @@ const PAGE = {
   ],
   "wrapup": {
     "summary": "A proposal to add an accessible \"Find for me\" mode to CannaScraper that recommends in-stock products by goal, with private saved picks and feedback.",
-    "changing": "The catalogue export step (ci/export_catalog.py), the check that the export file has the right fields (ci/check_export_shape.py), the page (site/index.html), the script that loads data into the page (site/static-api.js), the page check (ci/pages_ux_check.py), and a new rules file.",
+    "changing": "Five existing files change: the catalogue export step (ci/export_catalog.py), the export shape check (ci/check_export_shape.py), the page (site/index.html), the page's data script (site/static-api.js) and the page check (ci/pages_ux_check.py), which gains an accessibility test. One new file is added to the repository: the shared rules file (data/profile-rules.json). The build also publishes a new data file each hour: data/profiles.json.",
     "blocking": "Nothing is built until you answer the five questions and approve. The canna-stock-finder criteria proposal is separate and still waits on its own approval.",
     "next": "A build plan page splitting this into issues, for your approval before any code.",
     "todo": [
